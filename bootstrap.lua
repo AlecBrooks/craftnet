@@ -8,6 +8,9 @@ local STAGING_DIRECTORY = "/craftnet-update"
 local BACKUP_DIRECTORY = "/craftnet-backup"
 
 local PROGRAM = INSTALL_DIRECTORY .. "/main.lua"
+local INSTALLED_LOGO = INSTALL_DIRECTORY .. "/assets/logo.nfp"
+
+local MINIMUM_SPLASH_SECONDS = 5
 
 local TREE_URL =
     "https://api.github.com/repos/"
@@ -27,20 +30,139 @@ local RAW_BASE_URL =
     .. BRANCH
     .. "/"
 
-
 local API_HEADERS = {
     ["Accept"] = "application/vnd.github+json",
     ["User-Agent"] = "CraftNet-Bootstrap",
-    ["X-GitHub-Api-Version"] = "2026-03-10",
+    ["X-GitHub-Api-Version"] = "2022-11-28",
 }
 
+-- First-install fallback. Once CraftNet is installed, the updater
+-- loads /craftnet/assets/logo.nfp instead.
+local EMBEDDED_LOGO = [[22222f9999fff222ff99999f22222f9fff9f22222f99999
+2fffff9fff9f2fff2f9fffffff2fff99ff9f2fffffff9ff
+2fffff9999ff22222f9999ffff2fff9f9f9f2222ffff9ff
+2fffff9f9fff2fff2f9fffffff2fff9ff99f2fffffff9ff
+22222f9ff9ff2fff2f9fffffff2fff9fff9f22222fff9ff
+]]
+
+local splashStartedAt = os.epoch("utc")
+
+local function loadLogo()
+    local installed = paintutils.loadImage(INSTALLED_LOGO)
+
+    if installed then
+        return installed
+    end
+
+    return paintutils.parseImage(EMBEDDED_LOGO)
+end
+
+local splashLogo = loadLogo()
+
+local function getImageSize(image)
+    local imageWidth = 0
+    local imageHeight = #image
+
+    for _, row in ipairs(image) do
+        imageWidth = math.max(imageWidth, #row)
+    end
+
+    return imageWidth, imageHeight
+end
+
+local function centerText(y, text, color)
+    local width = term.getSize()
+    local x = math.max(
+        1,
+        math.floor((width - #text) / 2) + 1
+    )
+
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(color or colors.white)
+    term.setCursorPos(x, y)
+    term.write(text)
+end
+
+local function drawSplash(status, detail, statusColor)
+    local width, height = term.getSize()
+    local imageWidth, imageHeight =
+        getImageSize(splashLogo)
+
+    local imageX = math.max(
+        1,
+        math.floor((width - imageWidth) / 2) + 1
+    )
+
+    local imageY = math.max(
+        1,
+        math.floor((height - imageHeight) / 2) - 2
+    )
+
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
+    term.clear()
+
+    paintutils.drawImage(
+        splashLogo,
+        imageX,
+        imageY
+    )
+
+    local titleY = math.min(
+        height,
+        imageY + imageHeight + 1
+    )
+
+    centerText(
+        titleY,
+        "CraftNet Gateway",
+        colors.white
+    )
+
+    if status and titleY + 2 <= height then
+        centerText(
+            titleY + 2,
+            status,
+            statusColor or colors.lightGray
+        )
+    end
+
+    if detail and titleY + 3 <= height then
+        local maximumLength = math.max(1, width - 2)
+        local displayed = tostring(detail)
+
+        if #displayed > maximumLength then
+            displayed =
+                displayed:sub(1, maximumLength - 3)
+                .. "..."
+        end
+
+        centerText(
+            titleY + 3,
+            displayed,
+            colors.gray
+        )
+    end
+end
+
+local function waitForMinimumSplashTime()
+    local elapsedMilliseconds =
+        os.epoch("utc") - splashStartedAt
+
+    local remainingSeconds =
+        MINIMUM_SPLASH_SECONDS
+        - (elapsedMilliseconds / 1000)
+
+    if remainingSeconds > 0 then
+        sleep(remainingSeconds)
+    end
+end
 
 local function deleteIfExists(path)
     if fs.exists(path) then
         fs.delete(path)
     end
 end
-
 
 local function ensureParentDirectory(path)
     local parent = fs.getDir(path)
@@ -52,7 +174,6 @@ local function ensureParentDirectory(path)
     end
 end
 
-
 local function encodeRepositoryPath(path)
     local encodedSegments = {}
 
@@ -63,7 +184,6 @@ local function encodeRepositoryPath(path)
 
     return table.concat(encodedSegments, "/")
 end
-
 
 local function readFailedResponse(
     requestError,
@@ -87,7 +207,6 @@ local function readFailedResponse(
 
     return message
 end
-
 
 local function download(url, headers, binary)
     local response,
@@ -115,8 +234,12 @@ local function download(url, headers, binary)
     return contents
 end
 
-
 local function getRepositoryFiles()
+    drawSplash(
+        "Checking for updates...",
+        "Reading repository file list."
+    )
+
     local manifestSource, downloadError =
         download(
             TREE_URL,
@@ -202,7 +325,6 @@ local function getRepositoryFiles()
     return files
 end
 
-
 local function writeDownloadedFile(
     relativePath,
     contents
@@ -228,25 +350,19 @@ local function writeDownloadedFile(
     return true
 end
 
-
 local function downloadRepository(files)
     deleteIfExists(STAGING_DIRECTORY)
     fs.makeDir(STAGING_DIRECTORY)
 
-    print(
-        "Downloading "
-        .. tostring(#files)
-        .. " files..."
-    )
-
     for index, fileInfo in ipairs(files) do
-        print(
+        drawSplash(
+            "Updating CraftNet...",
             "["
-            .. tostring(index)
-            .. "/"
-            .. tostring(#files)
-            .. "] "
-            .. fileInfo.relativePath
+                .. tostring(index)
+                .. "/"
+                .. tostring(#files)
+                .. "] "
+                .. fileInfo.relativePath
         )
 
         local url =
@@ -284,8 +400,12 @@ local function downloadRepository(files)
     return true
 end
 
-
 local function installUpdate()
+    drawSplash(
+        "Installing update...",
+        "Activating downloaded files."
+    )
+
     deleteIfExists(BACKUP_DIRECTORY)
 
     local hadExistingInstall =
@@ -337,7 +457,6 @@ local function installUpdate()
     return true
 end
 
-
 local function recoverInterruptedUpdate()
     if not fs.exists(INSTALL_DIRECTORY)
         and fs.exists(BACKUP_DIRECTORY)
@@ -347,6 +466,7 @@ local function recoverInterruptedUpdate()
             BACKUP_DIRECTORY,
             INSTALL_DIRECTORY
         )
+
     elseif fs.exists(INSTALL_DIRECTORY)
         and fs.exists(BACKUP_DIRECTORY)
     then
@@ -355,7 +475,6 @@ local function recoverInterruptedUpdate()
 
     deleteIfExists(STAGING_DIRECTORY)
 end
-
 
 local function updateCraftNet()
     local files, treeError =
@@ -385,33 +504,42 @@ local function updateCraftNet()
         .. " files installed."
 end
 
-
-term.setBackgroundColor(colors.black)
-term.setTextColor(colors.white)
-term.clear()
-term.setCursorPos(1, 1)
-
 recoverInterruptedUpdate()
-
-print("Updating CraftNet...")
+drawSplash(
+    "Starting CraftNet...",
+    "Preparing updater."
+)
 
 local updated, updateResult =
     updateCraftNet()
 
 if updated then
-    print("Update complete.")
-    print(updateResult)
-else
-    printError(
-        "Update failed: "
-        .. tostring(updateResult)
+    drawSplash(
+        "Update complete.",
+        updateResult,
+        colors.lime
     )
-
-    print("Using cached version.")
+else
+    drawSplash(
+        "Update failed.",
+        tostring(updateResult),
+        colors.red
+    )
 end
+
+waitForMinimumSplashTime()
 
 if fs.exists(PROGRAM) then
     shell.run(PROGRAM)
 else
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
+    term.clear()
+    term.setCursorPos(1, 1)
+
     printError("CraftNet is not installed.")
+
+    if not updated then
+        printError(tostring(updateResult))
+    end
 end
