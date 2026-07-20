@@ -32,7 +32,7 @@ It is not a real CraftNet relay.
 ## Status Screen
 
 The gateway dashboard currently displays:
-
+![alt text](pics/image.png)
 ```text
 Gateway status
 Account
@@ -135,6 +135,8 @@ ports open 80
 ```
 
 Marks CraftNet port `80` as open and saves the change to persistent settings.
+
+![alt text](pics/image-1.png)
 
 Valid port numbers are:
 
@@ -264,6 +266,7 @@ The persistent relay must be disconnected before running the echo test.
 ```text
 relay connect
 ```
+![alt text](pics/image-2.png)
 
 Opens a persistent WebSocket connection to the configured relay.
 
@@ -313,6 +316,7 @@ Reports whether a persistent relay connection is currently active.
 ```text
 relay ping
 ```
+![alt text](pics/image-3.png)
 
 Creates a valid CraftNet `ping` message, encodes it as JSON, and sends it through the persistent WebSocket.
 
@@ -347,7 +351,7 @@ Protocol ping sent: 0-1784566449002-1
 ```text
 relay last
 ```
-
+![alt text](pics/image-4.png)
 Displays the type and ID of the most recently received valid CraftNet protocol message.
 
 Example:
