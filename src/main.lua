@@ -17,4 +17,4 @@ term.setTextColor(colors.white)
 
 term.setCursorPos(2, 4)
 print("Gateway starting...")
-print("Sync Works!")
+print("hello world??")
