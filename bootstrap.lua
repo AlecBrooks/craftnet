@@ -14,7 +14,7 @@ local BOOTSTRAP_PATH = "/bootstrap.lua"
 local STARTUP_PATH = "/startup.lua"
 local STARTUP_COMMAND = 'shell.run("/bootstrap.lua")\n'
 
-local MINIMUM_SPLASH_SECONDS = 5
+local MINIMUM_SPLASH_SECONDS = 2
 
 local TREE_URL =
     "https://api.github.com/repos/"

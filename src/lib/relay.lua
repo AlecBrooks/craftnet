@@ -267,6 +267,34 @@ function relay.run(settings)
     end
 end
 
+function relay.checkReachable(settings)
+    if activeSocket then
+        return true
+    end
+
+    local url = getConfiguredUrl(settings)
+
+    if not url then
+        return false
+    end
+
+    local opened, socket =
+        pcall(
+            http.websocket,
+            {
+                url = url,
+                timeout = 5,
+            }
+        )
+
+    if not opened or not socket then
+        return false
+    end
+
+    closeQuietly(socket)
+
+    return true
+end
 
 function relay.test(settings)
     if activeSocket then

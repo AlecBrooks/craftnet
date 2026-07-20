@@ -110,6 +110,16 @@ function relayCommand.run(
                 or "Could not save relay URL."
         end
 
+        settings.relayHealth = "CHECKING"
+
+        os.queueEvent(
+            "craftnet_relay_health_check"
+        )
+
+        os.queueEvent(
+            "craftnet_ui_refresh"
+        )
+
         return true, "Relay URL updated."
 
     elseif action == "test" then

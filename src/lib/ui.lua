@@ -17,7 +17,7 @@ end
 function ui.getLocalEnv()
     width, height = term.getSize()
     header_x = math.floor((width - #message) / 2) + 1
-    header_y = 2
+    header_y = 1
 end
 
 
@@ -146,6 +146,54 @@ local function getRelayStatusColor(status)
     end
 end
 
+local function getRelayHealthColor(status)
+    if status == "ONLINE" then
+        return colors.green
+
+    elseif status == "CHECKING" then
+        return colors.orange
+
+    elseif status == "OFFLINE" then
+        return colors.red
+
+    else
+        return colors.gray
+    end
+end
+
+local function drawTopStatusBar(
+    x1,
+    y,
+    x2,
+    relayHealth
+)
+    local leftLabel = "RELAY STATUS: "
+    local rightText =
+        "ID: " .. tostring(os.getComputerID())
+
+    local leftX = x1 + 2
+    local rightX =
+        x2 - #rightText + 1
+
+    term.setBackgroundColor(colors.blue)
+
+    term.setCursorPos(leftX, y)
+    term.setTextColor(colors.white)
+    term.write(leftLabel)
+
+    term.setTextColor(
+        getRelayHealthColor(relayHealth)
+    )
+    term.write(relayHealth)
+
+    if rightX >
+        leftX + #leftLabel + #relayHealth + 1
+    then
+        term.setCursorPos(rightX, y)
+        term.setTextColor(colors.white)
+        term.write(rightText)
+    end
+end
 
 function ui.drawUI(settings, notice)
     settings = settings or {}
@@ -158,6 +206,9 @@ function ui.drawUI(settings, notice)
 
     local relayStatus =
         tostring(settings.relayStatus or "DISCONNECTED")
+
+    local relayHealth =
+        tostring(settings.relayHealth or "CHECKING")
 
     local publicAddress =
         tostring(settings.publicAddress or "Unassigned")
@@ -190,6 +241,13 @@ function ui.drawUI(settings, notice)
         frame_y2,
         colors.white,
         colors.blue
+    )
+
+    drawTopStatusBar(
+        frame_x1 -2,
+        frame_y1 - 1,
+        frame_x2,
+        relayHealth
     )
 
     -- Status rows
