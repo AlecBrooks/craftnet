@@ -1,6 +1,3 @@
-Paste this directly into `README.md`:
-
-````markdown
 # CraftNet Gateway
 
 CraftNet is an experimental internet-style network for **CC:Tweaked** computers.
@@ -700,8 +697,6 @@ A modem will eventually be needed when separate ComputerCraft machines inside th
 ## Version
 
 Current development version:
-
-```text
 CraftNet Gateway v0.1
 ```
 
