@@ -10,6 +10,10 @@ local BACKUP_DIRECTORY = "/craftnet-backup"
 local PROGRAM = INSTALL_DIRECTORY .. "/main.lua"
 local INSTALLED_LOGO = INSTALL_DIRECTORY .. "/assets/logo.nfp"
 
+local BOOTSTRAP_PATH = "/bootstrap.lua"
+local STARTUP_PATH = "/startup.lua"
+local STARTUP_COMMAND = 'shell.run("/bootstrap.lua")\n'
+
 local MINIMUM_SPLASH_SECONDS = 5
 
 local TREE_URL =
@@ -233,6 +237,61 @@ local function download(url, headers, binary)
 
     return contents
 end
+
+local function installStartupFile()
+    if not fs.exists(BOOTSTRAP_PATH) then
+        return false,
+            "Bootstrap must be installed as "
+            .. BOOTSTRAP_PATH
+    end
+
+    local existingSource = nil
+
+    if fs.exists(STARTUP_PATH) then
+        if fs.isDir(STARTUP_PATH) then
+            return false,
+                STARTUP_PATH
+                .. " is a directory, not a file."
+        end
+
+        local existingFile =
+            fs.open(STARTUP_PATH, "r")
+
+        if not existingFile then
+            return false,
+                "Could not read " .. STARTUP_PATH
+        end
+
+        existingSource = existingFile.readAll()
+        existingFile.close()
+    end
+
+    if existingSource == STARTUP_COMMAND then
+        return true, "Automatic startup already installed."
+    end
+
+    if existingSource
+        and existingSource ~= ""
+    then
+        return false,
+            STARTUP_PATH
+            .. " already exists. CraftNet did not overwrite it."
+    end
+
+    local startupFile =
+        fs.open(STARTUP_PATH, "w")
+
+    if not startupFile then
+        return false,
+            "Could not create " .. STARTUP_PATH
+    end
+
+    startupFile.write(STARTUP_COMMAND)
+    startupFile.close()
+
+    return true, "Automatic startup installed."
+end
+
 
 local function getRepositoryFiles()
     drawSplash(
@@ -505,24 +564,58 @@ local function updateCraftNet()
 end
 
 recoverInterruptedUpdate()
+
+local startupInstalled, startupResult =
+    installStartupFile()
+
 drawSplash(
     "Starting CraftNet...",
-    "Preparing updater."
+    startupInstalled
+        and startupResult
+        or tostring(startupResult),
+    startupInstalled
+        and colors.lightGray
+        or colors.red
 )
 
 local updated, updateResult =
     updateCraftNet()
 
 if updated then
+    local detail = tostring(updateResult)
+
+    if startupInstalled then
+        detail =
+            detail
+            .. " Automatic startup ready."
+    else
+        detail =
+            detail
+            .. " Startup warning: "
+            .. tostring(startupResult)
+    end
+
     drawSplash(
         "Update complete.",
-        updateResult,
-        colors.lime
+        detail,
+        startupInstalled
+            and colors.lime
+            or colors.yellow
     )
 else
+    local detail =
+        tostring(updateResult)
+
+    if not startupInstalled then
+        detail =
+            detail
+            .. " Startup warning: "
+            .. tostring(startupResult)
+    end
+
     drawSplash(
         "Update failed.",
-        tostring(updateResult),
+        detail,
         colors.red
     )
 end
