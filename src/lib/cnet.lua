@@ -8,6 +8,7 @@ local RESPONSE_EVENT =
     "craftnet_daemon_response"
 
 local DEFAULT_DAEMON_TIMEOUT = 5
+local DEFAULT_REQUEST_TIMEOUT = 5
 
 local requestCounter = 0
 
@@ -100,18 +101,89 @@ local function normalizePacket(record)
 
     return {
         id = packet.id,
-        source = payload.source,
-        sourcePort = payload.sourcePort,
-        destination = payload.destination,
-        destinationPort = payload.destinationPort,
-        internalPort = delivery.internalPort,
+        type = packet.type,
+
+        source =
+            payload.source,
+
+        sourcePort =
+            payload.sourcePort,
+
+        destination =
+            payload.destination,
+
+        destinationPort =
+            payload.destinationPort,
+
+        internalPort =
+            delivery.internalPort,
+
+        returnToken =
+            payload.returnToken,
+
         data = payload.data,
-        gatewayId = record.senderId,
-        receivedAt = record.receivedAt,
+
+        gatewayId =
+            record.senderId,
+
+        receivedAt =
+            record.receivedAt,
+
         raw = packet,
     }
 end
 
+local function normalizeResponse(record)
+    if type(record) ~= "table" then
+        return nil,
+            "The network manager returned "
+            .. "an invalid response."
+    end
+
+    if record.error then
+        return nil,
+            tostring(record.error)
+    end
+
+    local response =
+        record.response or {}
+
+    local payload =
+        response.payload or {}
+
+    if response.type ~= "response" then
+        return nil,
+            "The network manager returned "
+            .. "an invalid CraftNet response."
+    end
+
+    return {
+        id = response.id,
+        type = response.type,
+
+        source =
+            payload.source,
+
+        sourcePort =
+            payload.sourcePort,
+
+        destination =
+            payload.destination,
+
+        returnToken =
+            payload.returnToken,
+
+        data = payload.data,
+
+        gatewayId =
+            record.senderId,
+
+        receivedAt =
+            record.receivedAt,
+
+        raw = response,
+    }
+end
 
 function cnet.connect(gatewayId)
     gatewayId = tonumber(gatewayId)
@@ -245,6 +317,128 @@ function cnet.send(
     )
 end
 
+function cnet.request(
+    destination,
+    destinationPort,
+    data,
+    timeout
+)
+    if type(destination) ~= "string"
+        or destination == ""
+    then
+        return nil,
+            "Destination address is required."
+    end
+
+    destinationPort =
+        parsePort(destinationPort)
+
+    if not destinationPort then
+        return nil,
+            "Destination port must be "
+            .. "from 1 to 65535."
+    end
+
+    if data == nil then
+        return nil,
+            "Request data is required."
+    end
+
+    if timeout == nil then
+        timeout =
+            DEFAULT_REQUEST_TIMEOUT
+    else
+        timeout = tonumber(timeout)
+
+        if not timeout
+            or timeout < 0
+        then
+            return nil,
+                "Request timeout must be "
+                .. "zero or greater."
+        end
+    end
+
+    local started,
+        sessionOrError =
+            callDaemon(
+                "request_start",
+                {
+                    destination =
+                        destination,
+
+                    destinationPort =
+                        destinationPort,
+
+                    data = data,
+                },
+                20
+            )
+
+    if not started then
+        return nil,
+            sessionOrError
+    end
+
+    local token =
+        sessionOrError.token
+
+    if type(token) ~= "string"
+        or token == ""
+    then
+        return nil,
+            "The network manager did not "
+            .. "create a return token."
+    end
+
+    local startedAt =
+        os.epoch("utc")
+
+    while true do
+        local success,
+            completedOrError =
+                callDaemon(
+                    "return_pop",
+                    {
+                        token = token,
+                    },
+                    2
+                )
+
+        if not success then
+            return nil,
+                completedOrError
+        end
+
+        if completedOrError then
+            return normalizeResponse(
+                completedOrError
+            )
+        end
+
+        local elapsed =
+            (
+                os.epoch("utc")
+                - startedAt
+            ) / 1000
+
+        if elapsed >= timeout then
+            callDaemon(
+                "cancel_return",
+                {
+                    token = token,
+                },
+                2
+            )
+
+            return nil,
+                "Timed out waiting for "
+                .. "a CraftNet response."
+        end
+
+        sleep(0.1)
+    end
+end
 
 function cnet.receive(port, timeout)
     port = parsePort(port)
@@ -303,7 +497,46 @@ end
 function cnet.reply(packet, data)
     if type(packet) ~= "table" then
         return false,
-            "A received CraftNet packet is required."
+            "A received CraftNet packet "
+            .. "or request is required."
+    end
+
+    if data == nil then
+        return false,
+            "Response data is required."
+    end
+
+    if packet.type == "request"
+        or packet.returnToken ~= nil
+    then
+        if not packet.source
+            or not packet.destinationPort
+            or not packet.returnToken
+        then
+            return false,
+                "The request does not contain "
+                .. "return-token routing information."
+        end
+
+        return callDaemon(
+            "respond",
+            {
+                destination =
+                    packet.source,
+
+                -- Use the public destination
+                -- port, not the translated
+                -- internal host port.
+                sourcePort =
+                    packet.destinationPort,
+
+                returnToken =
+                    packet.returnToken,
+
+                data = data,
+            },
+            10
+        )
     end
 
     if not packet.source
@@ -311,7 +544,8 @@ function cnet.reply(packet, data)
         or not packet.destinationPort
     then
         return false,
-            "The packet does not contain reply routing information."
+            "The packet does not contain "
+            .. "reply routing information."
     end
 
     return cnet.send(

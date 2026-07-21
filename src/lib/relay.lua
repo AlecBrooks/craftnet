@@ -1,8 +1,22 @@
 local relay = {}
 
-local protocol = require("lib.protocol")
-local router = require("lib.router")
-local config = require("config")
+local protocol =
+    require("lib.protocol")
+
+local localProtocol =
+    require("lib.local_protocol")
+
+local router =
+    require("lib.router")
+
+local modem =
+    require("lib.modem")
+
+local returnSessions =
+    require("lib.return_sessions")
+
+local config =
+    require("config")
 
 
 local activeSocket = nil
@@ -151,12 +165,209 @@ local function rejectPacket(
     end
 end
 
+local function rejectReturn(
+    message,
+    code,
+    reason
+)
+    lastRejected = {
+        message = message,
+        code = code,
+        reason = reason,
+        rejectedAt =
+            os.epoch("utc"),
+    }
+
+    os.queueEvent(
+        "craftnet_relay_return_rejected",
+        message.id,
+        code
+    )
+end
+
+local function routeReturnResponse(
+    settings,
+    message
+)
+    local payload =
+        message.payload or {}
+
+    local destination =
+        string.lower(
+            tostring(
+                payload.destination
+                or ""
+            )
+        )
+
+    local publicAddress =
+        string.lower(
+            tostring(
+                settings.publicAddress
+                or ""
+            )
+        )
+
+    if destination ~= publicAddress then
+        return false,
+            "WRONG_DESTINATION",
+            "The response was addressed "
+                .. "to another gateway."
+    end
+
+    local session,
+        sessionError =
+            returnSessions.get(
+                payload.returnToken
+            )
+
+    if not session then
+        return false,
+            "UNKNOWN_RETURN_TOKEN",
+            tostring(sessionError)
+    end
+
+    local actualSource =
+        string.lower(
+            tostring(
+                payload.source
+                or ""
+            )
+        )
+
+    if actualSource
+        ~= session.expectedSource
+    then
+        return false,
+            "RETURN_SOURCE_MISMATCH",
+            "The response source address "
+                .. "does not match the "
+                .. "active return session."
+    end
+
+    if tonumber(payload.sourcePort)
+        ~= session.expectedSourcePort
+    then
+        return false,
+            "RETURN_PORT_MISMATCH",
+            "The response source port "
+                .. "does not match the "
+                .. "active return session."
+    end
+
+    local delivery =
+        localProtocol.newReturnDelivery(
+            message
+        )
+
+    local sent, sendError =
+        modem.send(
+            session.computerId,
+            delivery
+        )
+
+    if not sent then
+        return false,
+            "HOST_UNAVAILABLE",
+            "Could not deliver the response "
+                .. "to host ID "
+                .. tostring(
+                    session.computerId
+                )
+                .. ": "
+                .. tostring(
+                    sendError
+                    or "Unknown error"
+                )
+    end
+
+    returnSessions.remove(
+        payload.returnToken
+    )
+
+    os.queueEvent(
+        "craftnet_return_delivered",
+        payload.returnToken,
+        session.computerId,
+        message.id
+    )
+
+    return true
+end
+
+local function routeRequestError(
+    message
+)
+    local payload =
+        message.payload or {}
+
+    local session,
+        tokenOrLookupError =
+            returnSessions
+                .findByPublicRequestId(
+                    payload.replyTo
+                )
+
+    -- This error may belong to an ordinary
+    -- packet rather than a token request.
+    if not session then
+        return false
+    end
+
+    local token =
+        tokenOrLookupError
+
+    local localError =
+        localProtocol.newError(
+            session.localRequestId,
+            payload.code
+                or "REMOTE_ERROR",
+            payload.message
+                or "The remote gateway "
+                .. "rejected the request."
+        )
+
+    local sent, sendError =
+        modem.send(
+            session.computerId,
+            localError
+        )
+
+    if not sent then
+        return true,
+            false,
+            "HOST_UNAVAILABLE",
+            "Could not deliver the remote "
+                .. "request error to host ID "
+                .. tostring(
+                    session.computerId
+                )
+                .. ": "
+                .. tostring(
+                    sendError
+                    or "Unknown error"
+                )
+    end
+
+    returnSessions.remove(token)
+
+    os.queueEvent(
+        "craftnet_request_error_delivered",
+        payload.replyTo,
+        session.computerId,
+        session.localRequestId
+    )
+
+    return true, true
+end
 
 local function handleProtocolMessage(
     settings,
     message
 )
-    if message.type == "packet" then
+    if message.type == "packet" 
+        or message.type == "request"
+    then
         local payload =
             message.payload or {}
 
@@ -207,9 +418,57 @@ local function handleProtocolMessage(
 
             return
         end
+
+    elseif message.type == "response" then
+        local delivered,
+            returnErrorCode,
+            returnErrorMessage =
+                routeReturnResponse(
+                    settings,
+                    message
+                )
+
+        if not delivered then
+            rejectReturn(
+                message,
+                returnErrorCode
+                    or "RETURN_REJECTED",
+                returnErrorMessage
+                    or "The returned response "
+                    .. "was rejected."
+            )
+
+            return
+        end
+
+    elseif message.type == "error" then
+        local matchedRequest,
+            delivered,
+            deliveryErrorCode,
+            deliveryErrorMessage =
+                routeRequestError(
+                    message
+                )
+
+        if matchedRequest
+            and not delivered
+        then
+            rejectReturn(
+                message,
+                deliveryErrorCode
+                    or "ERROR_DELIVERY_FAILED",
+                deliveryErrorMessage
+                    or "The remote request "
+                    .. "error could not be "
+                    .. "delivered locally."
+            )
+
+            return
+        end
     end
 
     lastMessage = message
+
     lastProtocolError = nil
 
     os.queueEvent(

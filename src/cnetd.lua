@@ -46,6 +46,12 @@ local pendingGatewayId = nil
 
 local packetQueues = {}
 local pendingPings = {}
+
+local pendingReturns = {}
+local pendingReturnMessages = {}
+local completedReturns = {}
+local returnCounter = 0
+
 local lastAccepted = nil
 local lastRejected = nil
 local lastProtocolError = nil
@@ -55,6 +61,211 @@ local function now()
     return os.epoch("utc")
 end
 
+local RETURN_TOKEN_LENGTH = 24
+
+local RETURN_TOKEN_CHARACTERS =
+    "abcdefghijklmnopqrstuvwxyz"
+    .. "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    .. "0123456789"
+
+
+local function normalizeAddress(address)
+    if type(address) ~= "string" then
+        return nil
+    end
+
+    address =
+        string.lower(
+            address:match("^%s*(.-)%s*$")
+            or ""
+        )
+
+    if address == "" then
+        return nil
+    end
+
+    return address
+end
+
+local function isValidReturnToken(value)
+    return type(value) == "string"
+        and #value >= 8
+        and #value <= 64
+        and value:match("^[%w_-]+$") ~= nil
+end
+
+local function newReturnToken()
+    local token = nil
+
+    repeat
+        returnCounter =
+            returnCounter + 1
+
+        local characters = {}
+
+        for index = 1,
+            RETURN_TOKEN_LENGTH
+        do
+            local position =
+                math.random(
+                    1,
+                    #RETURN_TOKEN_CHARACTERS
+                )
+
+            characters[index] =
+                RETURN_TOKEN_CHARACTERS:sub(
+                    position,
+                    position
+                )
+        end
+
+        token =
+            table.concat(characters)
+
+    until not pendingReturns[token]
+        and not completedReturns[token]
+
+    return token
+end
+
+
+local function cleanupReturns()
+    local currentTime = now()
+
+    for token, session
+        in pairs(pendingReturns)
+    do
+        if session.expiresAt
+            <= currentTime
+        then
+
+            if session.requestMessageId then
+                pendingReturnMessages[
+                    session.requestMessageId
+                ] = nil
+            end
+            pendingReturns[token] = nil
+        end
+    end
+
+    for token, record
+        in pairs(completedReturns)
+    do
+        if record.expiresAt
+            <= currentTime
+        then
+            completedReturns[token] = nil
+        end
+    end
+end
+
+
+local function rejectReturn(
+    senderId,
+    message,
+    reason
+)
+    lastRejected = {
+        message = message,
+        senderId = senderId,
+        reason = reason,
+        rejectedAt = now(),
+    }
+
+    os.queueEvent(
+        "craftnet_return_rejected",
+        tostring(reason)
+    )
+end
+
+
+local function queueReturnResponse(
+    senderId,
+    message
+)
+    local delivery =
+        message.payload or {}
+
+    local response =
+        delivery.response or {}
+
+    local payload =
+        response.payload or {}
+
+    local token =
+        payload.returnToken
+
+    cleanupReturns()
+
+    local session =
+        pendingReturns[token]
+
+    if not session then
+        rejectReturn(
+            senderId,
+            message,
+            "Unknown, expired, or already-consumed "
+                .. "return token."
+        )
+
+        return
+    end
+
+    local actualSource =
+        normalizeAddress(
+            payload.source
+        )
+
+    if actualSource
+        ~= session.expectedSource
+    then
+        rejectReturn(
+            senderId,
+            message,
+            "Return source address does not match "
+                .. "the host's active session."
+        )
+
+        return
+    end
+
+    if tonumber(payload.sourcePort)
+        ~= session.expectedSourcePort
+    then
+        rejectReturn(
+            senderId,
+            message,
+            "Return source port does not match "
+                .. "the host's active session."
+        )
+
+        return
+    end
+
+    if session.requestMessageId then
+        pendingReturnMessages[
+            session.requestMessageId
+        ] = nil
+    end
+
+    pendingReturns[token] = nil
+
+    completedReturns[token] = {
+        response = response,
+        senderId = senderId,
+        receivedAt = now(),
+
+        -- A completed response should not remain
+        -- in memory forever if its application exits.
+        expiresAt =
+            now() + 30000,
+    }
+
+    os.queueEvent(
+        "craftnet_return_available",
+        token
+    )
+end
 
 local function isValidComputerId(value)
     return type(value) == "number"
@@ -628,6 +839,38 @@ local function handleError(message)
         setDisconnected(lastProtocolError)
     end
 
+    local token =
+        pendingReturnMessages[
+            payload.replyTo
+        ]
+
+    if token then
+        local session =
+            pendingReturns[token]
+
+        pendingReturnMessages[
+            payload.replyTo
+        ] = nil
+
+        pendingReturns[token] = nil
+
+        completedReturns[token] = {
+            error =
+                lastProtocolError,
+
+            receivedAt =
+                now(),
+
+            expiresAt =
+                now() + 30000,
+        }
+
+        os.queueEvent(
+            "craftnet_return_available",
+            token
+        )
+    end
+
     os.queueEvent(
         PING_ERROR_EVENT,
         payload.replyTo,
@@ -672,6 +915,14 @@ local function handleLocalMessage(
             message
         )
 
+    elseif message.type
+        == "return_delivery"
+    then
+        queueReturnResponse(
+            senderId,
+            message
+        )
+
     elseif message.type == "ping" then
         modem.send(
             senderId,
@@ -692,7 +943,6 @@ local function handleLocalMessage(
             .. tostring(message.type)
     end
 end
-
 
 local function receiveLoop()
     while running do
@@ -722,6 +972,7 @@ local function receiveLoop()
             lastProtocolError =
                 tostring(receiveError)
         end
+        cleanupReturns()
     end
 end
 
@@ -956,6 +1207,275 @@ local function handleRequest(
                 id = outbound.id,
             }
 
+
+    elseif action == "request_start" then
+        local healthy,
+            healthError =
+                ensureHealthy()
+
+        if not healthy then
+            return false, healthError
+        end
+
+        local destination =
+            normalizeAddress(
+                payload.destination
+            )
+
+        if not destination then
+            return false,
+                "Destination address is required."
+        end
+
+        local destinationPort =
+            tonumber(
+                payload.destinationPort
+            )
+
+        if not isValidPort(
+            destinationPort
+        ) then
+            return false,
+                "Destination port must be "
+                .. "from 1 to 65535."
+        end
+
+        if payload.data == nil then
+            return false,
+                "Request data is required."
+        end
+
+        cleanupReturns()
+
+        local token =
+            newReturnToken()
+
+        local request =
+            localProtocol.newRequest(
+                destination,
+                destinationPort,
+                token,
+                payload.data
+            )
+
+        local valid,
+            validationError =
+                localProtocol.validate(
+                    request
+                )
+
+        if not valid then
+            return false,
+                validationError
+        end
+
+        local createdAt = now()
+
+        pendingReturns[token] = {
+            token = token,
+
+            expectedSource =
+                destination,
+
+            expectedSourcePort =
+                destinationPort,
+
+            requestMessageId =
+                request.id,
+
+            createdAt =
+                createdAt,
+
+            -- The application may stop waiting
+            -- sooner, but the host session itself
+            -- lives for at most 30 seconds.
+            expiresAt =
+                createdAt + 30000,
+        }
+
+        pendingReturnMessages[
+            request.id
+        ] = token
+
+        local sent, sendError =
+            sendToGateway(request)
+
+        if not sent then
+            pendingReturnMessages[
+                request.id
+            ] = nil
+
+            pendingReturns[token] = nil
+
+            setDisconnected(sendError)
+
+            return false, sendError
+        end
+
+        return true,
+            {
+                token = token,
+                id = request.id,
+                expiresAt =
+                    pendingReturns[token]
+                        .expiresAt,
+            }
+
+    elseif action == "return_pop" then
+        local token =
+            tostring(
+                payload.token or ""
+            )
+
+        if not isValidReturnToken(
+            token
+        ) then
+            return false,
+                "A valid return token is required."
+        end
+
+        cleanupReturns()
+
+        local completed =
+            completedReturns[token]
+
+        if completed then
+            completedReturns[token] = nil
+
+            return true, completed
+        end
+
+        if pendingReturns[token] then
+            return true, nil
+        end
+
+        return false,
+            "Unknown, expired, cancelled, "
+            .. "or already-consumed return token."
+
+    elseif action == "cancel_return" then
+        local token =
+            tostring(
+                payload.token or ""
+            )
+
+        if not isValidReturnToken(
+            token
+        ) then
+            return false,
+                "A valid return token is required."
+        end
+
+        local session =
+            pendingReturns[token]
+
+        if session
+            and session.requestMessageId
+        then
+            pendingReturnMessages[
+                session.requestMessageId
+            ] = nil
+        end
+
+        local existed =
+            pendingReturns[token] ~= nil
+            or completedReturns[token]
+                ~= nil
+
+        pendingReturns[token] = nil
+        completedReturns[token] = nil
+
+        return true,
+            existed
+                and "Return session cancelled."
+                or "Return session was already gone."
+
+    elseif action == "respond" then
+        local healthy,
+            healthError =
+                ensureHealthy()
+
+        if not healthy then
+            return false, healthError
+        end
+
+        local destination =
+            normalizeAddress(
+                payload.destination
+            )
+
+        if not destination then
+            return false,
+                "Response destination is required."
+        end
+
+        local sourcePort =
+            tonumber(payload.sourcePort)
+
+        if not isValidPort(sourcePort) then
+            return false,
+                "Response source port must be "
+                .. "from 1 to 65535."
+        end
+
+        local token =
+            tostring(
+                payload.returnToken or ""
+            )
+
+        if not isValidReturnToken(
+            token
+        ) then
+            return false,
+                "The received request does not "
+                .. "contain a valid return token."
+        end
+
+        if payload.data == nil then
+            return false,
+                "Response data is required."
+        end
+
+        local response =
+            localProtocol.newResponse(
+                destination,
+                sourcePort,
+                token,
+                payload.data
+            )
+
+        local valid,
+            validationError =
+                localProtocol.validate(
+                    response
+                )
+
+        if not valid then
+            return false,
+                validationError
+        end
+
+        local sent, sendError =
+            sendToGateway(response)
+
+        if not sent then
+            setDisconnected(sendError)
+            return false, sendError
+        end
+
+        return true,
+            {
+                message =
+                    "Response sent through "
+                    .. "gateway ID "
+                    .. tostring(
+                        settings.gatewayId
+                    )
+                    .. ".",
+
+                id = response.id,
+                returnToken = token,
+            }
     elseif action == "pop" then
         local port = tonumber(payload.port)
 

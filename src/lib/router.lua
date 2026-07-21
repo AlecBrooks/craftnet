@@ -15,13 +15,15 @@ function router.routeInbound(
     packet
 )
     if type(packet) ~= "table"
-        or packet.type ~= "packet"
+        or (
+            packet.type ~= "packet"
+            and packet.type ~= "request"
+        )
     then
         return false,
             "INVALID_PACKET",
-            "Router received an invalid CraftNet packet."
+            "Router received an invalid CraftNet packet or request."
     end
-
     local payload =
         packet.payload or {}
 

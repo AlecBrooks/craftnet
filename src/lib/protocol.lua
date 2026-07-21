@@ -8,6 +8,8 @@ protocol.TYPES = {
     hello = true,
     welcome = true,
     packet = true,
+    request = true,
+    response = true,
     error = true,
     ping = true,
     pong = true,
@@ -41,6 +43,12 @@ local function isValidPort(value)
         and value <= 65535
 end
 
+local function isValidReturnToken(value)
+    return type(value) == "string"
+        and #value >= 8
+        and #value <= 64
+        and value:match("^[%w_-]+$") ~= nil
+end
 
 local function validateHello(payload)
     if type(payload.gatewayId) ~= "number" then
@@ -101,6 +109,74 @@ local function validatePacket(payload)
     return true
 end
 
+local function validateRequest(payload)
+    if not isNonEmptyString(payload.source) then
+        return false,
+            "request.source must be a string."
+    end
+
+    if not isNonEmptyString(
+        payload.destination
+    ) then
+        return false,
+            "request.destination must be a string."
+    end
+
+    if not isValidPort(
+        payload.destinationPort
+    ) then
+        return false,
+            "request.destinationPort must be from 1 to 65535."
+    end
+
+    if not isValidReturnToken(
+        payload.returnToken
+    ) then
+        return false,
+            "request.returnToken must be a valid return token."
+    end
+
+    if payload.data == nil then
+        return false,
+            "request.data is required."
+    end
+
+    return true
+end
+
+
+local function validateResponse(payload)
+    if not isNonEmptyString(payload.source) then
+        return false,
+            "response.source must be a string."
+    end
+
+    if not isValidPort(payload.sourcePort) then
+        return false,
+            "response.sourcePort must be from 1 to 65535."
+    end
+
+    if not isNonEmptyString(
+        payload.destination
+    ) then
+        return false,
+            "response.destination must be a string."
+    end
+
+    if not isValidReturnToken(
+        payload.returnToken
+    ) then
+        return false,
+            "response.returnToken must be a valid return token."
+    end
+
+    if payload.data == nil then
+        return false,
+            "response.data is required."
+    end
+
+    return true
+end
 
 local function validateError(payload)
     if not isNonEmptyString(payload.replyTo) then
@@ -146,16 +222,16 @@ local function validatePong(payload)
     return true
 end
 
-
 local validators = {
     hello = validateHello,
     welcome = validateWelcome,
     packet = validatePacket,
+    request = validateRequest,
+    response = validateResponse,
     error = validateError,
     ping = validatePing,
     pong = validatePong,
 }
-
 
 local function createMessage(messageType, payload)
     return {
@@ -277,7 +353,6 @@ function protocol.newWelcome(sessionId, publicAddress)
     })
 end
 
-
 function protocol.newPacket(
     source,
     sourcePort,
@@ -294,6 +369,52 @@ function protocol.newPacket(
     })
 end
 
+function protocol.newRequest(
+    source,
+    destination,
+    destinationPort,
+    returnToken,
+    data
+)
+    return createMessage("request", {
+        source = source,
+
+        destination =
+            destination,
+
+        destinationPort =
+            destinationPort,
+
+        returnToken =
+            returnToken,
+
+        data = data,
+    })
+end
+
+
+function protocol.newResponse(
+    source,
+    sourcePort,
+    destination,
+    returnToken,
+    data
+)
+    return createMessage("response", {
+        source = source,
+
+        sourcePort =
+            sourcePort,
+
+        destination =
+            destination,
+
+        returnToken =
+            returnToken,
+
+        data = data,
+    })
+end
 
 function protocol.newError(replyTo, code, message)
     return createMessage("error", {

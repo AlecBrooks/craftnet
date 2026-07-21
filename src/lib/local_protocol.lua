@@ -18,11 +18,15 @@ localProtocol.TYPES = {
     welcome = true,
     outbound = true,
     deliver = true,
+
+    request = true,
+    response = true,
+    return_delivery = true,
+
     error = true,
     ping = true,
     pong = true,
 }
-
 
 local messageCounter = 0
 
@@ -58,6 +62,12 @@ local function isValidPort(value)
         and value <= 65535
 end
 
+local function isValidReturnToken(value)
+    return type(value) == "string"
+        and #value >= 8
+        and #value <= 64
+        and value:match("^[%w_-]+$") ~= nil
+end
 
 local function validateHello(payload)
     if not isValidComputerId(
@@ -148,9 +158,11 @@ local function validateDeliver(payload)
             "deliver.packet must be a CraftNet packet."
     end
 
-    if payload.packet.type ~= "packet" then
+    if payload.packet.type ~= "packet"
+        and payload.packet.type ~= "request"
+    then
         return false,
-            "deliver.packet must have type packet."
+            "deliver.packet must have type packet or request."
     end
 
     local valid, validationError =
@@ -167,6 +179,93 @@ local function validateDeliver(payload)
     return true
 end
 
+
+local function validateRequest(payload)
+    if not isNonEmptyString(
+        payload.destination
+    ) then
+        return false,
+            "request.destination must be a string."
+    end
+
+    if not isValidPort(
+        payload.destinationPort
+    ) then
+        return false,
+            "request.destinationPort must be from 1 to 65535."
+    end
+
+    if not isValidReturnToken(
+        payload.returnToken
+    ) then
+        return false,
+            "request.returnToken must be a valid return token."
+    end
+
+    if payload.data == nil then
+        return false,
+            "request.data is required."
+    end
+
+    return true
+end
+
+
+local function validateResponse(payload)
+    if not isNonEmptyString(
+        payload.destination
+    ) then
+        return false,
+            "response.destination must be a string."
+    end
+
+    if not isValidPort(
+        payload.sourcePort
+    ) then
+        return false,
+            "response.sourcePort must be from 1 to 65535."
+    end
+
+    if not isValidReturnToken(
+        payload.returnToken
+    ) then
+        return false,
+            "response.returnToken must be a valid return token."
+    end
+
+    if payload.data == nil then
+        return false,
+            "response.data is required."
+    end
+
+    return true
+end
+
+
+local function validateReturnDelivery(payload)
+    if type(payload.response) ~= "table" then
+        return false,
+            "return_delivery.response must be a CraftNet response."
+    end
+
+    if payload.response.type ~= "response" then
+        return false,
+            "return_delivery.response must have type response."
+    end
+
+    local valid, validationError =
+        publicProtocol.validate(
+            payload.response
+        )
+
+    if not valid then
+        return false,
+            "Invalid returned response: "
+            .. tostring(validationError)
+    end
+
+    return true
+end
 
 local function validateError(payload)
     if not isNonEmptyString(
@@ -220,17 +319,21 @@ local function validatePong(payload)
     return true
 end
 
-
 local validators = {
     hello = validateHello,
     welcome = validateWelcome,
     outbound = validateOutbound,
     deliver = validateDeliver,
+
+    request = validateRequest,
+    response = validateResponse,
+    return_delivery =
+        validateReturnDelivery,
+
     error = validateError,
     ping = validatePing,
     pong = validatePong,
 }
-
 
 local function createMessage(
     messageType,
@@ -448,6 +551,68 @@ function localProtocol.newDeliver(
     )
 end
 
+function localProtocol.newRequest(
+    destination,
+    destinationPort,
+    returnToken,
+    data
+)
+    return createMessage(
+        "request",
+        {
+            destination =
+                string.lower(
+                    tostring(destination or "")
+                ),
+
+            destinationPort =
+                tonumber(destinationPort),
+
+            returnToken =
+                tostring(returnToken or ""),
+
+            data = data,
+        }
+    )
+end
+
+
+function localProtocol.newResponse(
+    destination,
+    sourcePort,
+    returnToken,
+    data
+)
+    return createMessage(
+        "response",
+        {
+            destination =
+                string.lower(
+                    tostring(destination or "")
+                ),
+
+            sourcePort =
+                tonumber(sourcePort),
+
+            returnToken =
+                tostring(returnToken or ""),
+
+            data = data,
+        }
+    )
+end
+
+
+function localProtocol.newReturnDelivery(
+    response
+)
+    return createMessage(
+        "return_delivery",
+        {
+            response = response,
+        }
+    )
+end
 
 function localProtocol.newError(
     replyTo,

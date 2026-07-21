@@ -38,8 +38,13 @@ local function printPacket(packet)
         return
     end
 
+    local packetLabel =
+        packet.type == "request"
+        and "Accepted CraftNet request"
+        or "Accepted CraftNet packet"
+
     printColored(
-        "Accepted CraftNet packet",
+        packetLabel,
         colors.lime
     )
 
@@ -57,15 +62,20 @@ local function printPacket(packet)
         )
     )
 
-    print(
-        "From: "
-        .. tostring(
+    local sourceText =
+        tostring(
             packet.source or "unknown"
         )
-        .. ":"
-        .. tostring(
-            packet.sourcePort or "?"
-        )
+
+    if packet.sourcePort then
+        sourceText =
+            sourceText
+            .. ":"
+            .. tostring(packet.sourcePort)
+    end
+
+    print(
+        "From: " .. sourceText
     )
 
     print(
@@ -86,10 +96,60 @@ local function printPacket(packet)
         .. tostring(packet.id or "?")
     )
 
+    if packet.returnToken then
+        print(
+            "Return token: "
+            .. tostring(
+                packet.returnToken
+            )
+        )
+    end
+
     print("Data:")
     printData(packet.data)
 end
 
+local function printResponse(response)
+    printColored(
+        "CraftNet response received",
+        colors.lime
+    )
+
+    local sourceText =
+        tostring(
+            response.source or "unknown"
+        )
+
+    if response.sourcePort then
+        sourceText =
+            sourceText
+            .. ":"
+            .. tostring(
+                response.sourcePort
+            )
+    end
+
+    print(
+        "From: " .. sourceText
+    )
+
+    print(
+        "Response ID: "
+        .. tostring(
+            response.id or "?"
+        )
+    )
+
+    print(
+        "Return token: "
+        .. tostring(
+            response.returnToken or "?"
+        )
+    )
+
+    print("Data:")
+    printData(response.data)
+end
 
 local function printStatus(status)
     printColored(
@@ -205,6 +265,8 @@ local function showHelp()
     print("  cnet status")
     print("  cnet ping")
     print("  cnet send <address> <port> <message>")
+    print("  cnet request <address> <port> <message>")
+    print("  cnet reply <message>")
     print("  cnet listen <port>")
     print("  cnet unlisten <port>")
     print("  cnet listeners")
@@ -291,6 +353,96 @@ elseif command == "send" then
         print(
             "Local request ID: "
             .. tostring(result.id)
+        )
+    else
+        printColored(
+            result,
+            success
+                and colors.lime
+                or colors.red
+        )
+    end
+
+elseif command == "request" then
+    local destination =
+        arguments[1]
+
+    local port =
+        arguments[2]
+
+    local message =
+        table.concat(
+            arguments,
+            " ",
+            3
+        )
+
+    local response,
+        requestError =
+            cnet.request(
+                destination,
+                port,
+                message
+            )
+
+    if response then
+        printResponse(response)
+    else
+        printColored(
+            requestError,
+            colors.red
+        )
+    end
+
+elseif command == "reply" then
+    local message =
+        table.concat(
+            arguments,
+            " "
+        )
+
+    if message == "" then
+        printError(
+            "Usage: cnet reply <message>"
+        )
+
+        return
+    end
+
+    local packet, packetError =
+        cnet.last()
+
+    if not packet then
+        printColored(
+            packetError
+                or "No received packet "
+                .. "is available to reply to.",
+            colors.red
+        )
+
+        return
+    end
+
+    local success, result =
+        cnet.reply(
+            packet,
+            message
+        )
+
+    if success
+        and type(result) == "table"
+    then
+        printColored(
+            result.message
+                or "Response sent.",
+            colors.lime
+        )
+
+        print(
+            "Response ID: "
+            .. tostring(
+                result.id or "?"
+            )
         )
     else
         printColored(
