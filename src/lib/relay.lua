@@ -294,11 +294,89 @@ function relay.disconnect(settings)
     return true, "Relay disconnected."
 end
 
-
 function relay.sendMessage(settings, message)
     return sendProtocolMessage(settings, message)
 end
 
+function relay.sendPacket(
+    settings,
+    destination,
+    destinationPort,
+    data,
+    sourcePort
+)
+    if not activeSocket then
+        return false, "Relay is not connected."
+    end
+
+    if type(destination) ~= "string"
+        or destination == ""
+    then
+        return false, "Destination address is required."
+    end
+
+    destinationPort = tonumber(destinationPort)
+    sourcePort = tonumber(sourcePort)
+        or destinationPort
+
+    if not destinationPort
+        or destinationPort ~= math.floor(destinationPort)
+        or destinationPort < 1
+        or destinationPort > 65535
+    then
+        return false,
+            "Destination port must be from 1 to 65535."
+    end
+
+    if not sourcePort
+        or sourcePort ~= math.floor(sourcePort)
+        or sourcePort < 1
+        or sourcePort > 65535
+    then
+        return false,
+            "Source port must be from 1 to 65535."
+    end
+
+    if data == nil or tostring(data) == "" then
+        return false, "Packet data is required."
+    end
+
+    local source =
+        settings.publicAddress
+
+    if type(source) ~= "string"
+        or source == ""
+        or source == "Unassigned"
+    then
+        return false,
+            "The relay has not assigned a public address."
+    end
+
+    local packet =
+        protocol.newPacket(
+            source,
+            sourcePort,
+            string.lower(destination),
+            destinationPort,
+            tostring(data)
+        )
+
+    local sent, sendError =
+        sendProtocolMessage(settings, packet)
+
+    if not sent then
+        return false, sendError
+    end
+
+    return true,
+        "Packet sent to "
+        .. string.lower(destination)
+        .. ":"
+        .. tostring(destinationPort)
+        .. " ["
+        .. packet.id
+        .. "]"
+end
 
 function relay.ping(settings)
     local ping = protocol.newPing()

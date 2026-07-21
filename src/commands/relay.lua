@@ -45,6 +45,28 @@ function relayCommand.run(
 
         return true, "Relay disconnected."
 
+    elseif action == "send" then
+        local destination = arguments[2]
+        local destinationPort =
+            tonumber(arguments[3])
+
+        local data =
+            table.concat(arguments, " ", 4)
+
+        if not destination
+            or not destinationPort
+            or data == ""
+        then
+            return false,
+                "Usage: relay send <address> <port> <message>"
+        end
+
+        return relay.sendPacket(
+            settings,
+            destination,
+            destinationPort,
+            data
+        )
     elseif action == "ping" then
         return relay.ping(settings)
 
@@ -64,6 +86,34 @@ function relayCommand.run(
 
             return false,
                 "No CraftNet message received yet."
+        end
+
+                if message.type == "packet" then
+            local payload =
+                message.payload or {}
+
+            return true,
+                "Packet from "
+                .. tostring(payload.source)
+                .. ":"
+                .. tostring(payload.sourcePort)
+                .. " to port "
+                .. tostring(payload.destinationPort)
+                .. ": "
+                .. tostring(payload.data)
+        end
+
+        if message.type == "error" then
+            local payload =
+                message.payload or {}
+
+            return false,
+                tostring(payload.code or "ERROR")
+                .. ": "
+                .. tostring(
+                    payload.message
+                    or "Unknown relay error."
+                )
         end
 
         return true,
@@ -127,7 +177,7 @@ function relayCommand.run(
     end
 
     return false,
-        "Relay: connect, disconnect, status, ping, last, show, set, test"
+        "Relay: connect, disconnect, status, send, ping, last, show, set, test"
 end
 
 
