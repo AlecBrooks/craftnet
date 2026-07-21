@@ -7,7 +7,9 @@ local INSTALL_DIRECTORY = "/craftnet"
 local STAGING_DIRECTORY = "/craftnet-update"
 local BACKUP_DIRECTORY = "/craftnet-backup"
 
-local PROGRAM = INSTALL_DIRECTORY .. "/main.lua"
+local DATA_DIRECTORY = "/craftnet-data"
+local ROLE_PATH = DATA_DIRECTORY .. "/install-role.lua"
+
 local INSTALLED_LOGO = INSTALL_DIRECTORY .. "/assets/logo.nfp"
 
 local BOOTSTRAP_PATH = "/bootstrap.lua"
@@ -15,24 +17,41 @@ local STARTUP_PATH = "/startup.lua"
 local STARTUP_COMMAND = 'shell.run("/bootstrap.lua")\n'
 
 local MINIMUM_SPLASH_SECONDS = 2
+local arguments = { ... }
+
+local PROFILES = {
+    gateway = {
+        label = "Gateway",
+        program = "main.lua",
+        include = function()
+            return true
+        end,
+    },
+
+    host = {
+        label = "Host",
+        program = "cnet.lua",
+        files = {
+            ["cnet.lua"] = true,
+            ["config.lua"] = true,
+            ["assets/logo.nfp"] = true,
+            ["lib/modem.lua"] = true,
+            ["lib/local_protocol.lua"] = true,
+            ["lib/protocol.lua"] = true,
+        },
+    },
+}
 
 local TREE_URL =
     "https://api.github.com/repos/"
-    .. OWNER
-    .. "/"
-    .. REPOSITORY
-    .. "/git/trees/"
-    .. BRANCH
+    .. OWNER .. "/" .. REPOSITORY
+    .. "/git/trees/" .. BRANCH
     .. "?recursive=1"
 
 local RAW_BASE_URL =
     "https://raw.githubusercontent.com/"
-    .. OWNER
-    .. "/"
-    .. REPOSITORY
-    .. "/"
-    .. BRANCH
-    .. "/"
+    .. OWNER .. "/" .. REPOSITORY
+    .. "/" .. BRANCH .. "/"
 
 local API_HEADERS = {
     ["Accept"] = "application/vnd.github+json",
@@ -40,8 +59,6 @@ local API_HEADERS = {
     ["X-GitHub-Api-Version"] = "2022-11-28",
 }
 
--- First-install fallback. Once CraftNet is installed, the updater
--- loads /craftnet/assets/logo.nfp instead.
 local EMBEDDED_LOGO = [[22222f9999fff222ff99999f22222f9fff9f22222f99999
 2fffff9fff9f2fff2f9fffffff2fff99ff9f2fffffff9ff
 2fffff9999ff22222f9999ffff2fff9f9f9f2222ffff9ff
@@ -50,6 +67,137 @@ local EMBEDDED_LOGO = [[22222f9999fff222ff99999f22222f9fff9f22222f99999
 ]]
 
 local splashStartedAt = os.epoch("utc")
+local activeProfile = nil
+
+local function trim(value)
+    return tostring(value or ""):match("^%s*(.-)%s*$")
+end
+
+local function normalizeRole(value)
+    value = string.lower(trim(value))
+
+    if value == "1" or value == "gateway" then
+        return "gateway"
+    end
+
+    if value == "2"
+        or value == "host"
+        or value == "client"
+    then
+        return "host"
+    end
+
+    return nil
+end
+
+local function ensureDirectory(path)
+    if not fs.exists(path) then
+        fs.makeDir(path)
+    end
+end
+
+local function loadSavedRole()
+    if not fs.exists(ROLE_PATH)
+        or fs.isDir(ROLE_PATH)
+    then
+        return nil
+    end
+
+    local file = fs.open(ROLE_PATH, "r")
+
+    if not file then
+        return nil
+    end
+
+    local source = file.readAll()
+    file.close()
+
+    local value = textutils.unserialize(source)
+
+    if type(value) == "table" then
+        return normalizeRole(value.role)
+    end
+
+    if type(value) == "string" then
+        return normalizeRole(value)
+    end
+
+    return normalizeRole(source)
+end
+
+local function saveRole(role)
+    ensureDirectory(DATA_DIRECTORY)
+
+    local file = fs.open(ROLE_PATH, "w")
+
+    if not file then
+        return false, "Could not save installation role."
+    end
+
+    file.write(textutils.serialize({ role = role }))
+    file.close()
+
+    return true
+end
+
+local function chooseRole()
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
+    term.clear()
+    term.setCursorPos(1, 1)
+
+    print("CraftNet installation type")
+    print("")
+    print("1. Gateway")
+    print("   Router, relay, ports, and services.")
+    print("")
+    print("2. Host")
+    print("   cnet terminal utility.")
+    print("")
+
+    while true do
+        term.setTextColor(colors.white)
+        term.write("Install as gateway or host? ")
+
+        local choice = normalizeRole(read())
+
+        if choice then
+            return choice
+        end
+
+        term.setTextColor(colors.red)
+        print("Enter 1, 2, gateway, or host.")
+    end
+end
+
+local function resolveRole()
+    local requested = normalizeRole(arguments[1])
+
+    if requested then
+        local saved, saveError = saveRole(requested)
+
+        if not saved then
+            return nil, saveError
+        end
+
+        return requested
+    end
+
+    local saved = loadSavedRole()
+
+    if saved then
+        return saved
+    end
+
+    local selected = chooseRole()
+    local roleSaved, saveError = saveRole(selected)
+
+    if not roleSaved then
+        return nil, saveError
+    end
+
+    return selected
+end
 
 local function loadLogo()
     local installed = paintutils.loadImage(INSTALLED_LOGO)
@@ -89,8 +237,7 @@ end
 
 local function drawSplash(status, detail, statusColor)
     local width, height = term.getSize()
-    local imageWidth, imageHeight =
-        getImageSize(splashLogo)
+    local imageWidth, imageHeight = getImageSize(splashLogo)
 
     local imageX = math.max(
         1,
@@ -106,20 +253,21 @@ local function drawSplash(status, detail, statusColor)
     term.setTextColor(colors.white)
     term.clear()
 
-    paintutils.drawImage(
-        splashLogo,
-        imageX,
-        imageY
-    )
+    paintutils.drawImage(splashLogo, imageX, imageY)
 
     local titleY = math.min(
         height,
         imageY + imageHeight + 1
     )
 
+    local label =
+        activeProfile
+        and activeProfile.label
+        or "Installer"
+
     centerText(
         titleY,
-        "CraftNet Gateway",
+        "CraftNet " .. label,
         colors.white
     )
 
@@ -171,9 +319,7 @@ end
 local function ensureParentDirectory(path)
     local parent = fs.getDir(path)
 
-    if parent ~= ""
-        and not fs.exists(parent)
-    then
+    if parent ~= "" and not fs.exists(parent) then
         fs.makeDir(parent)
     end
 end
@@ -189,10 +335,7 @@ local function encodeRepositoryPath(path)
     return table.concat(encodedSegments, "/")
 end
 
-local function readFailedResponse(
-    requestError,
-    errorResponse
-)
+local function readFailedResponse(requestError, errorResponse)
     local message =
         tostring(requestError or "Unknown HTTP error")
 
@@ -254,8 +397,7 @@ local function installStartupFile()
                 .. " is a directory, not a file."
         end
 
-        local existingFile =
-            fs.open(STARTUP_PATH, "r")
+        local existingFile = fs.open(STARTUP_PATH, "r")
 
         if not existingFile then
             return false,
@@ -270,16 +412,13 @@ local function installStartupFile()
         return true, "Automatic startup already installed."
     end
 
-    if existingSource
-        and existingSource ~= ""
-    then
+    if existingSource and existingSource ~= "" then
         return false,
             STARTUP_PATH
             .. " already exists. CraftNet did not overwrite it."
     end
 
-    local startupFile =
-        fs.open(STARTUP_PATH, "w")
+    local startupFile = fs.open(STARTUP_PATH, "w")
 
     if not startupFile then
         return false,
@@ -292,19 +431,23 @@ local function installStartupFile()
     return true, "Automatic startup installed."
 end
 
+local function shouldIncludeFile(profile, relativePath)
+    if profile.include then
+        return profile.include(relativePath)
+    end
 
-local function getRepositoryFiles()
+    return profile.files
+        and profile.files[relativePath] == true
+end
+
+local function getRepositoryFiles(profile)
     drawSplash(
         "Checking for updates...",
         "Reading repository file list."
     )
 
     local manifestSource, downloadError =
-        download(
-            TREE_URL,
-            API_HEADERS,
-            false
-        )
+        download(TREE_URL, API_HEADERS, false)
 
     if not manifestSource then
         return nil,
@@ -332,45 +475,61 @@ local function getRepositoryFiles()
     end
 
     local files = {}
-    local sourcePrefix =
-        SOURCE_DIRECTORY .. "/"
-
-    local foundMainProgram = false
+    local found = {}
+    local sourcePrefix = SOURCE_DIRECTORY .. "/"
 
     for _, entry in ipairs(manifest.tree) do
         if entry.type == "blob"
             and type(entry.path) == "string"
-            and entry.path:sub(
-                1,
-                #sourcePrefix
-            ) == sourcePrefix
+            and entry.path:sub(1, #sourcePrefix)
+                == sourcePrefix
         then
             local relativePath =
-                entry.path:sub(
-                    #sourcePrefix + 1
-                )
+                entry.path:sub(#sourcePrefix + 1)
 
-            if relativePath ~= "" then
+            if relativePath ~= ""
+                and shouldIncludeFile(
+                    profile,
+                    relativePath
+                )
+            then
                 files[#files + 1] = {
                     repositoryPath = entry.path,
                     relativePath = relativePath,
                 }
 
-                if relativePath == "main.lua" then
-                    foundMainProgram = true
-                end
+                found[relativePath] = true
             end
         end
     end
 
     if #files == 0 then
         return nil,
-            "No files were found under src/."
+            "No files were found for the "
+            .. profile.label
+            .. " profile."
     end
 
-    if not foundMainProgram then
+    if not found[profile.program] then
         return nil,
-            "The repository does not contain src/main.lua."
+            "The repository does not contain "
+            .. SOURCE_DIRECTORY
+            .. "/"
+            .. profile.program
+            .. "."
+    end
+
+    if profile.files then
+        for requiredPath in pairs(profile.files) do
+            if not found[requiredPath] then
+                return nil,
+                    "Host profile is missing "
+                    .. SOURCE_DIRECTORY
+                    .. "/"
+                    .. requiredPath
+                    .. "."
+            end
+        end
     end
 
     table.sort(
@@ -384,15 +543,9 @@ local function getRepositoryFiles()
     return files
 end
 
-local function writeDownloadedFile(
-    relativePath,
-    contents
-)
+local function writeDownloadedFile(relativePath, contents)
     local destination =
-        fs.combine(
-            STAGING_DIRECTORY,
-            relativePath
-        )
+        fs.combine(STAGING_DIRECTORY, relativePath)
 
     ensureParentDirectory(destination)
 
@@ -451,7 +604,6 @@ local function downloadRepository(files)
 
         if not written then
             deleteIfExists(STAGING_DIRECTORY)
-
             return false, writeError
         end
     end
@@ -471,13 +623,12 @@ local function installUpdate()
         fs.exists(INSTALL_DIRECTORY)
 
     if hadExistingInstall then
-        local movedOldInstall,
-            moveError =
-                pcall(
-                    fs.move,
-                    INSTALL_DIRECTORY,
-                    BACKUP_DIRECTORY
-                )
+        local movedOldInstall, moveError =
+            pcall(
+                fs.move,
+                INSTALL_DIRECTORY,
+                BACKUP_DIRECTORY
+            )
 
         if not movedOldInstall then
             return false,
@@ -486,13 +637,12 @@ local function installUpdate()
         end
     end
 
-    local movedNewInstall,
-        moveError =
-            pcall(
-                fs.move,
-                STAGING_DIRECTORY,
-                INSTALL_DIRECTORY
-            )
+    local movedNewInstall, moveError =
+        pcall(
+            fs.move,
+            STAGING_DIRECTORY,
+            INSTALL_DIRECTORY
+        )
 
     if not movedNewInstall then
         if hadExistingInstall
@@ -535,9 +685,9 @@ local function recoverInterruptedUpdate()
     deleteIfExists(STAGING_DIRECTORY)
 end
 
-local function updateCraftNet()
+local function updateCraftNet(profile)
     local files, treeError =
-        getRepositoryFiles()
+        getRepositoryFiles(profile)
 
     if not files then
         return false, treeError
@@ -560,10 +710,25 @@ local function updateCraftNet()
 
     return true,
         tostring(#files)
-        .. " files installed."
+        .. " files installed for "
+        .. profile.label
+        .. "."
 end
 
 recoverInterruptedUpdate()
+
+local role, roleError = resolveRole()
+
+if not role then
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
+    term.clear()
+    term.setCursorPos(1, 1)
+    printError(tostring(roleError))
+    return
+end
+
+activeProfile = PROFILES[role]
 
 local startupInstalled, startupResult =
     installStartupFile()
@@ -579,7 +744,7 @@ drawSplash(
 )
 
 local updated, updateResult =
-    updateCraftNet()
+    updateCraftNet(activeProfile)
 
 if updated then
     local detail = tostring(updateResult)
@@ -603,8 +768,7 @@ if updated then
             or colors.yellow
     )
 else
-    local detail =
-        tostring(updateResult)
+    local detail = tostring(updateResult)
 
     if not startupInstalled then
         detail =
@@ -622,15 +786,25 @@ end
 
 waitForMinimumSplashTime()
 
-if fs.exists(PROGRAM) then
-    shell.run(PROGRAM)
+local program =
+    fs.combine(
+        INSTALL_DIRECTORY,
+        activeProfile.program
+    )
+
+if fs.exists(program) then
+    shell.run(program)
 else
     term.setBackgroundColor(colors.black)
     term.setTextColor(colors.white)
     term.clear()
     term.setCursorPos(1, 1)
 
-    printError("CraftNet is not installed.")
+    printError(
+        "CraftNet "
+        .. activeProfile.label
+        .. " is not installed."
+    )
 
     if not updated then
         printError(tostring(updateResult))

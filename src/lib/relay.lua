@@ -1,6 +1,7 @@
 local relay = {}
 
 local protocol = require("lib.protocol")
+local router = require("lib.router")
 local config = require("config")
 
 
@@ -151,7 +152,10 @@ local function rejectPacket(
 end
 
 
-local function handleProtocolMessage(settings, message)
+local function handleProtocolMessage(
+    settings,
+    message
+)
     if message.type == "packet" then
         local payload =
             message.payload or {}
@@ -180,7 +184,27 @@ local function handleProtocolMessage(settings, message)
                 reason
             )
 
-            -- Rejected packets do not replace lastMessage.
+            return
+        end
+
+        local routed,
+            routeErrorCode,
+            routeErrorMessage =
+                router.routeInbound(
+                    settings,
+                    message
+                )
+
+        if not routed then
+            rejectPacket(
+                settings,
+                message,
+                routeErrorCode
+                    or "ROUTING_FAILED",
+                routeErrorMessage
+                    or "The packet could not be routed."
+            )
+
             return
         end
     end
@@ -194,8 +218,6 @@ local function handleProtocolMessage(settings, message)
         message.id
     )
 
-    -- Any CraftNet node receiving a ping answers
-    -- with a pong.
     if message.type == "ping" then
         local pong =
             protocol.newPong(message.id)

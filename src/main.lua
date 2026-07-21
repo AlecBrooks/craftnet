@@ -1,6 +1,7 @@
 local ui = require("lib.ui")
 local command = require("lib.command")
 local relay = require("lib.relay")
+local modem = require("lib.modem")
 local settingsManager = require("lib.settings")
 
 
@@ -13,6 +14,8 @@ local settings = settingsManager.load()
 -- Never trust saved connection statuses after reboot.
 settings.relayStatus = "DISCONNECTED"
 settings.relayHealth = "CHECKING"
+settings.modemStatus = "CHECKING"
+settings.modemCount = 0
 
 if settings.gatewayEnabled then
     settings.gatewayStatus = "STARTING"
@@ -23,6 +26,7 @@ end
 
 local running = true
 local notice = nil
+local currentView = "status"
 
 
 local function trim(value)
@@ -70,7 +74,11 @@ end
 
 local function consoleLoop()
     while running do
-        ui.drawUI(settings, notice)
+        ui.drawUI(
+            settings,
+            notice,
+            currentView
+        )
 
         local input,
             relayChanged,
@@ -100,12 +108,18 @@ local function consoleLoop()
                 running = false
 
             else
-                local success, resultMessage =
-                    command.execute(
-                        input,
-                        settings,
-                        settingsManager
-                    )
+                local success,
+                    resultMessage,
+                    requestedView =
+                        command.execute(
+                            input,
+                            settings,
+                            settingsManager
+                        )
+                if requestedView then
+                    currentView =
+                        requestedView
+                end
 
                 notice = {
                     text = resultMessage or "",
@@ -123,6 +137,62 @@ local function relayLoop()
     relay.run(settings)
 end
 
+local function modemHardwareLoop()
+    modem.run()
+end
+
+
+local function modemStateLoop()
+    while running do
+        local _,
+            isReady,
+            status,
+            modemCount =
+                os.pullEvent(
+                    "craftnet_modem_state"
+                )
+
+        settings.modemStatus =
+            tostring(
+                status
+                or (
+                    isReady
+                    and "READY"
+                    or "MISSING"
+                )
+            )
+
+        settings.modemCount =
+            tonumber(modemCount) or 0
+
+        if not isReady then
+            if relay.isConnected() then
+                relay.disconnect(settings)
+
+                os.queueEvent(
+                    "craftnet_relay_state",
+                    false,
+                    "Modem removed. Relay disconnected."
+                )
+            end
+
+            if settings.gatewayEnabled then
+                settings.gatewayStatus = "OFFLINE"
+            end
+
+        elseif settings.gatewayEnabled then
+            if relay.isConnected() then
+                settings.gatewayStatus = "ONLINE"
+            else
+                settings.gatewayStatus = "STARTING"
+            end
+        end
+
+        os.queueEvent(
+            "craftnet_ui_refresh"
+        )
+    end
+end
 
 local function relayHealthLoop()
     while running do
@@ -167,8 +237,11 @@ ui.getLocalEnv()
 parallel.waitForAny(
     consoleLoop,
     relayLoop,
-    relayHealthLoop
+    relayHealthLoop,
+    modemHardwareLoop,
+    modemStateLoop
 )
 
 -- Close the persistent connection when exiting.
 relay.disconnect(settings)
+modem.shutdown()

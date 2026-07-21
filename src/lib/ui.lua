@@ -7,7 +7,7 @@ local header_y
 local message
 
 local config = require("config")
-
+local routes = require("lib.routes")
 
 function ui.getConfig()
     message = "CraftNet Gateway " .. config.version
@@ -161,42 +161,346 @@ local function getRelayHealthColor(status)
     end
 end
 
+local function getModemStatusColor(status)
+    if status == "READY" then
+        return colors.lime
+
+    elseif status == "CHECKING" then
+        return colors.orange
+
+    elseif status == "MISSING" then
+        return colors.red
+
+    else
+        return colors.gray
+    end
+end
+
 local function drawTopStatusBar(
     x1,
     y,
     x2,
-    relayHealth
+    relayHealth,
+    modemStatus
 )
-    local leftLabel = "RELAY STATUS: "
+    local relayLabel = "RELAY: "
+    local modemLabel = "MODEM: "
+
     local rightText =
-        "ID: " .. tostring(os.getComputerID())
+        "ID: " .. tostring(
+            os.getComputerID()
+        )
 
     local leftX = x1 + 2
+
     local rightX =
         x2 - #rightText + 1
 
+    local modemWidth =
+        #modemLabel + #modemStatus
+
+    local modemX =
+        math.floor(
+            (
+                x1
+                + x2
+                - modemWidth
+            ) / 2
+        ) + 1
+
     term.setBackgroundColor(colors.blue)
 
+    -- Relay status on the left.
     term.setCursorPos(leftX, y)
     term.setTextColor(colors.white)
-    term.write(leftLabel)
+    term.write(relayLabel)
 
     term.setTextColor(
-        getRelayHealthColor(relayHealth)
+        getRelayHealthColor(
+            relayHealth
+        )
     )
+
     term.write(relayHealth)
 
-    if rightX >
-        leftX + #leftLabel + #relayHealth + 1
+    -- Modem status in the center.
+    local relayEnd =
+        leftX
+        + #relayLabel
+        + #relayHealth
+
+    if modemX > relayEnd
+        and modemX + modemWidth
+            < rightX
     then
-        term.setCursorPos(rightX, y)
+        term.setCursorPos(modemX, y)
         term.setTextColor(colors.white)
-        term.write(rightText)
+        term.write(modemLabel)
+
+        term.setTextColor(
+            getModemStatusColor(
+                modemStatus
+            )
+        )
+
+        term.write(modemStatus)
+    end
+
+    -- Computer ID on the right.
+    term.setCursorPos(rightX, y)
+    term.setTextColor(colors.white)
+    term.write(rightText)
+end
+
+local function drawPortsTable(
+    settings,
+    frameX1,
+    frameY1,
+    frameX2,
+    frameY2
+)
+    local routeList =
+        routes.list(
+            settings.openPorts
+        )
+
+    local title =
+        "Port Routing Table"
+
+    local titleX =
+        math.floor(
+            (
+                frameX1
+                + frameX2
+                - #title
+            ) / 2
+        ) + 1
+
+    term.setBackgroundColor(
+        colors.blue
+    )
+
+    term.setCursorPos(
+        titleX,
+        frameY1 + 1
+    )
+
+    term.setTextColor(
+        colors.white
+    )
+
+    term.write(title)
+
+    if #routeList == 0 then
+        local emptyText =
+            "No port routes configured."
+
+        local emptyX =
+            math.floor(
+                (
+                    frameX1
+                    + frameX2
+                    - #emptyText
+                ) / 2
+            ) + 1
+
+        term.setCursorPos(
+            emptyX,
+            frameY1 + 5
+        )
+
+        term.setTextColor(
+            colors.lightGray
+        )
+
+        term.write(emptyText)
+
+        return
+    end
+
+    local externalX =
+        frameX1 + 2
+
+    local firstArrowX =
+        externalX + 9
+
+    local internalX =
+        firstArrowX + 4
+
+    local secondArrowX =
+        internalX + 9
+
+    local computerX =
+        secondArrowX + 4
+
+    local serviceX =
+        computerX + 5
+
+    local headerY =
+        frameY1 + 3
+
+    term.setTextColor(
+        colors.lightBlue
+    )
+
+    term.setCursorPos(
+        externalX,
+        headerY
+    )
+    term.write("External")
+
+    term.setCursorPos(
+        internalX,
+        headerY
+    )
+    term.write("Internal")
+
+    term.setCursorPos(
+        computerX,
+        headerY
+    )
+    term.write("ID")
+
+    term.setCursorPos(
+        serviceX,
+        headerY
+    )
+    term.write("Service")
+
+    local firstRowY =
+        headerY + 2
+
+    local maximumRows =
+        math.max(
+            0,
+            frameY2 - firstRowY
+        )
+
+    local visibleRows =
+        math.min(
+            #routeList,
+            maximumRows
+        )
+
+    for index = 1, visibleRows do
+        local route =
+            routeList[index]
+
+        local rowY =
+            firstRowY + index - 1
+
+        term.setTextColor(
+            colors.white
+        )
+
+        term.setCursorPos(
+            externalX + 2,
+            rowY
+        )
+        term.write(
+            tostring(
+                route.externalPort
+            )
+        )
+
+        term.setCursorPos(
+            firstArrowX,
+            rowY
+        )
+        term.setTextColor(
+            colors.lightGray
+        )
+        term.write("-->")
+
+        term.setCursorPos(
+            internalX + 2,
+            rowY
+        )
+        term.setTextColor(
+            colors.white
+        )
+        term.write(
+            tostring(
+                route.internalPort
+            )
+        )
+
+        term.setCursorPos(
+            secondArrowX,
+            rowY
+        )
+        term.setTextColor(
+            colors.lightGray
+        )
+        term.write("-->")
+
+        term.setCursorPos(
+            computerX,
+            rowY
+        )
+        term.setTextColor(
+            colors.white
+        )
+        term.write(
+            tostring(
+                route.computerId
+            )
+        )
+
+        term.setCursorPos(
+            serviceX,
+            rowY
+        )
+
+        if route.computerId
+            == os.getComputerID()
+        then
+            term.setTextColor(
+                colors.yellow
+            )
+            term.write("none")
+        else
+            term.setTextColor(
+                colors.lightGray
+            )
+            term.write("remote")
+        end
+    end
+
+    if #routeList > visibleRows
+        and visibleRows > 0
+    then
+        local remaining =
+            #routeList - visibleRows
+
+        term.setCursorPos(
+            externalX,
+            frameY2 - 1
+        )
+
+        term.setTextColor(
+            colors.lightGray
+        )
+
+        term.write(
+            "... "
+            .. tostring(remaining)
+            .. " more"
+        )
     end
 end
 
-function ui.drawUI(settings, notice)
+function ui.drawUI(
+    settings,
+    notice,
+    currentView
+)
     settings = settings or {}
+
+    currentView =
+    tostring(
+        currentView or "status"
+    )
 
     local gatewayStatus =
         tostring(settings.gatewayStatus or "UNKNOWN")
@@ -209,6 +513,9 @@ function ui.drawUI(settings, notice)
 
     local relayHealth =
         tostring(settings.relayHealth or "CHECKING")
+
+    local modemStatus =
+    tostring(settings.modemStatus or "CHECKING")
 
     local publicAddress =
         tostring(settings.publicAddress or "Unassigned")
@@ -244,11 +551,22 @@ function ui.drawUI(settings, notice)
     )
 
     drawTopStatusBar(
-        frame_x1 -2,
+        frame_x1 - 2,
         frame_y1 - 1,
         frame_x2,
-        relayHealth
+        relayHealth,
+        modemStatus
     )
+
+    if currentView == "ports" then
+    drawPortsTable(
+        settings,
+        frame_x1,
+        frame_y1,
+        frame_x2,
+        frame_y2
+    )
+    else
 
     -- Status rows
     local status_x = frame_x1 + 2
@@ -303,7 +621,7 @@ function ui.drawUI(settings, notice)
         connectedHosts,
         colors.white
     )
-
+end
     -- Command result
     if notice
         and notice.text

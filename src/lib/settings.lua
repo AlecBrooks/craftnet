@@ -1,5 +1,7 @@
 local settingsManager = {}
 
+local routes = require("lib.routes")
+
 local directory = "/craftnet-data"
 local path = directory .. "/settings.lua"
 
@@ -65,10 +67,13 @@ function settingsManager.load()
         end
     end
 
-    if type(settings.openPorts) ~= "table" then
-        settings.openPorts = {}
-    end
-
+    settings.openPorts =
+    routes.normalize(
+        settings.openPorts
+    )
+    -- Save migrations from the old boolean/array
+    -- formats into full route objects.
+    settingsManager.save(settings)
     return settings
 end
 

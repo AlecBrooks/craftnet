@@ -2,9 +2,15 @@ local systemCommand = {}
 
 
 function systemCommand.run(arguments)
-    local action = string.lower(arguments[1] or "")
+    local action =
+        string.lower(
+            arguments[1] or ""
+        )
 
-    if action == "clear" then
+    if action == "status" then
+        return true, "", "status"
+
+    elseif action == "clear" then
         return true, ""
 
     elseif action == "reboot" then
@@ -15,7 +21,7 @@ function systemCommand.run(arguments)
     end
 
     return false,
-        "Usage: system clear | system reboot | system shutdown"
+        "Usage: system status | system clear | system reboot | system shutdown"
 end
 
 
