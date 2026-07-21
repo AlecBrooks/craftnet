@@ -1,6 +1,7 @@
 local relay = {}
 
 local protocol = require("lib.protocol")
+local config = require("config")
 
 
 local activeSocket = nil
@@ -164,15 +165,120 @@ function relay.connect(settings)
             )
     end
 
+    -- Encode and send the initial CraftNet handshake.
+    local hello =
+        protocol.newHello(config.version)
+
+    local encodedHello, encodeError =
+        protocol.encode(hello)
+
+    if not encodedHello then
+        closeQuietly(socket)
+        settings.relayStatus = "DISCONNECTED"
+
+        return false,
+            "Could not create relay hello: "
+            .. tostring(encodeError)
+    end
+
+    local sent, sendError =
+        pcall(socket.send, encodedHello)
+
+    if not sent then
+        closeQuietly(socket)
+        settings.relayStatus = "DISCONNECTED"
+
+        return false,
+            "Could not send relay hello: "
+            .. tostring(sendError)
+    end
+
+    -- Wait for the relay to accept the gateway and assign
+    -- its temporary public address.
+    local received,
+        encodedWelcome,
+        receiveDetail =
+            pcall(socket.receive, 10)
+
+    if not received then
+        closeQuietly(socket)
+        settings.relayStatus = "DISCONNECTED"
+
+        return false,
+            "Relay handshake failed: "
+            .. tostring(encodedWelcome)
+    end
+
+    if not encodedWelcome then
+        closeQuietly(socket)
+        settings.relayStatus = "DISCONNECTED"
+
+        return false,
+            "Relay handshake failed: "
+            .. tostring(
+                receiveDetail
+                    or "No welcome message received."
+            )
+    end
+
+    if receiveDetail == true then
+        closeQuietly(socket)
+        settings.relayStatus = "DISCONNECTED"
+
+        return false,
+            "Relay sent a binary welcome message."
+    end
+
+    local welcome, decodeError =
+        protocol.decode(encodedWelcome)
+
+    if not welcome then
+        closeQuietly(socket)
+        settings.relayStatus = "DISCONNECTED"
+
+        return false,
+            "Invalid relay welcome: "
+            .. tostring(decodeError)
+    end
+
+    if welcome.type ~= "welcome" then
+        closeQuietly(socket)
+        settings.relayStatus = "DISCONNECTED"
+
+        return false,
+            "Expected welcome, received "
+            .. tostring(welcome.type)
+            .. "."
+    end
+
     activeSocket = socket
     activeUrl = url
 
-    lastMessage = nil
+    lastMessage = welcome
     lastProtocolError = nil
+
+    settings.sessionId =
+        welcome.payload.sessionId
+
+    settings.publicAddress =
+        welcome.payload.publicAddress
 
     settings.relayStatus = "CONNECTED"
 
-    return true, "Relay connected."
+    if settings.gatewayEnabled then
+        settings.gatewayStatus = "ONLINE"
+    end
+
+    os.queueEvent(
+        "craftnet_relay_message",
+        welcome.type,
+        welcome.id
+    )
+
+    return true,
+        "Relay connected as "
+        .. settings.publicAddress
+        .. "."
 end
 
 
