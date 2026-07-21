@@ -9,6 +9,7 @@ local activeUrl = nil
 
 local lastMessage = nil
 local lastProtocolError = nil
+local lastRejected = nil
 
 
 local function closeQuietly(socket)
@@ -91,7 +92,99 @@ local function sendProtocolMessage(settings, message)
 end
 
 
+local function isPortOpen(settings, port)
+    if type(settings.openPorts) ~= "table" then
+        return false
+    end
+
+    local entry =
+        settings.openPorts[tostring(port)]
+
+    -- Supports both:
+    --
+    -- ["12"] = true
+    --
+    -- and the future route format:
+    --
+    -- ["12"] = {
+    --     internalPort = 12,
+    --     computerId = 0,
+    -- }
+    return entry ~= nil and entry ~= false
+end
+
+
+local function rejectPacket(
+    settings,
+    message,
+    code,
+    reason
+)
+    lastRejected = {
+        message = message,
+        code = code,
+        reason = reason,
+        rejectedAt = os.epoch("utc"),
+    }
+
+    os.queueEvent(
+        "craftnet_relay_packet_rejected",
+        message.id,
+        code
+    )
+
+    -- Tell the sender that the destination gateway
+    -- refused the packet.
+    local response =
+        protocol.newError(
+            message.id,
+            code,
+            reason
+        )
+
+    local sent, sendError =
+        sendProtocolMessage(settings, response)
+
+    if not sent then
+        announceClosed(sendError)
+    end
+end
+
+
 local function handleProtocolMessage(settings, message)
+    if message.type == "packet" then
+        local payload =
+            message.payload or {}
+
+        local destinationPort =
+            payload.destinationPort
+
+        if not isPortOpen(
+            settings,
+            destinationPort
+        ) then
+            local reason =
+                "Port "
+                .. tostring(destinationPort)
+                .. " is closed on "
+                .. tostring(
+                    settings.publicAddress
+                    or "this gateway"
+                )
+                .. "."
+
+            rejectPacket(
+                settings,
+                message,
+                "PORT_CLOSED",
+                reason
+            )
+
+            -- Rejected packets do not replace lastMessage.
+            return
+        end
+    end
+
     lastMessage = message
     lastProtocolError = nil
 
@@ -101,19 +194,23 @@ local function handleProtocolMessage(settings, message)
         message.id
     )
 
-    -- Any CraftNet node receiving a ping answers with a pong.
+    -- Any CraftNet node receiving a ping answers
+    -- with a pong.
     if message.type == "ping" then
-        local pong = protocol.newPong(message.id)
+        local pong =
+            protocol.newPong(message.id)
 
         local sent, sendError =
-            sendProtocolMessage(settings, pong)
+            sendProtocolMessage(
+                settings,
+                pong
+            )
 
         if not sent then
             announceClosed(sendError)
         end
     end
 end
-
 
 function relay.isConnected()
     return activeSocket ~= nil
@@ -134,6 +231,9 @@ function relay.getLastProtocolError()
     return lastProtocolError
 end
 
+function relay.getLastRejected()
+    return lastRejected
+end
 
 function relay.connect(settings)
     if activeSocket then
@@ -256,6 +356,7 @@ function relay.connect(settings)
 
     lastMessage = welcome
     lastProtocolError = nil
+    lastRejected = nil
 
     settings.sessionId =
         welcome.payload.sessionId

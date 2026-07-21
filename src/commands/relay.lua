@@ -71,6 +71,51 @@ function relayCommand.run(
         return relay.ping(settings)
 
     elseif action == "last" then
+        local mode =
+            string.lower(arguments[2] or "")
+
+        if mode == "rejected" then
+            local rejected =
+                relay.getLastRejected()
+
+            if not rejected then
+                return false,
+                 "No rejected packets received yet."
+         end
+
+           local message =
+                rejected.message or {}
+
+           local payload =
+                message.payload or {}
+
+            return false,
+                "Rejected packet from "
+                .. tostring(
+                    payload.source or "unknown"
+                )
+                .. ":"
+                .. tostring(
+                    payload.sourcePort or "?"
+                )
+                .. " to port "
+                .. tostring(
+                    payload.destinationPort or "?"
+                )
+                .. " ["
+                .. tostring(
+                    rejected.code or "REJECTED"
+                )
+                .. "]: "
+                .. tostring(
+                    payload.data or ""
+                )
+
+        elseif mode ~= "" then
+            return false,
+                "Usage: relay last | relay last rejected"
+        end
+
         local message =
             relay.getLastMessage()
 
@@ -88,7 +133,7 @@ function relayCommand.run(
                 "No CraftNet message received yet."
         end
 
-                if message.type == "packet" then
+        if message.type == "packet" then
             local payload =
                 message.payload or {}
 
@@ -98,7 +143,9 @@ function relayCommand.run(
                 .. ":"
                 .. tostring(payload.sourcePort)
                 .. " to port "
-                .. tostring(payload.destinationPort)
+                .. tostring(
+                    payload.destinationPort
+                )
                 .. ": "
                 .. tostring(payload.data)
         end
@@ -108,7 +155,9 @@ function relayCommand.run(
                 message.payload or {}
 
             return false,
-                tostring(payload.code or "ERROR")
+                tostring(
+                    payload.code or "ERROR"
+                )
                 .. ": "
                 .. tostring(
                     payload.message
@@ -177,8 +226,7 @@ function relayCommand.run(
     end
 
     return false,
-        "Relay: connect, disconnect, status, send, ping, last, show, set, test"
-end
-
+        "Relay: connect, disconnect, status, send, ping, last [rejected], show, set, test"
+    end
 
 return relayCommand
