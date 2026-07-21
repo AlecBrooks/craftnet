@@ -207,6 +207,23 @@ local function handlePing(
     senderId,
     message
 )
+    local host =
+        hosts[senderId]
+
+    if not host then
+        sendError(
+            senderId,
+            message.id,
+            "NOT_REGISTERED",
+            "This host is not registered with the gateway."
+        )
+
+        return
+    end
+
+    host.lastSeen =
+        os.epoch("utc")
+
     local pong =
         localProtocol.newPong(
             message.id

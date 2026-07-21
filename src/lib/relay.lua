@@ -460,7 +460,7 @@ function relay.sendPacket(
             "Source port must be from 1 to 65535."
     end
 
-    if data == nil or tostring(data) == "" then
+    if data == nil then
         return false, "Packet data is required."
     end
 
@@ -481,7 +481,7 @@ function relay.sendPacket(
             sourcePort,
             string.lower(destination),
             destinationPort,
-            tostring(data)
+            data
         )
 
     local sent, sendError =

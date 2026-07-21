@@ -30,11 +30,14 @@ local PROFILES = {
 
     host = {
         label = "Host",
-        program = "cnet.lua",
+        program = "host.lua",
         files = {
+            ["host.lua"] = true,
             ["cnet.lua"] = true,
+            ["cnetd.lua"] = true,
             ["config.lua"] = true,
             ["assets/logo.nfp"] = true,
+            ["lib/cnet.lua"] = true,
             ["lib/modem.lua"] = true,
             ["lib/local_protocol.lua"] = true,
             ["lib/protocol.lua"] = true,
@@ -152,7 +155,8 @@ local function chooseRole()
     print("   Router, relay, ports, and services.")
     print("")
     print("2. Host")
-    print("   cnet terminal utility.")
+    print("   Silent network manager, normal shell,")
+    print("   cnet command, and developer API.")
     print("")
 
     while true do
