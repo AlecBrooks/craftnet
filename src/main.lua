@@ -2,8 +2,8 @@ local ui = require("lib.ui")
 local command = require("lib.command")
 local relay = require("lib.relay")
 local modem = require("lib.modem")
+local localGateway = require("lib.local_gateway")
 local settingsManager = require("lib.settings")
-
 
 local RELAY_HEALTH_INTERVAL = 30
 
@@ -16,6 +16,7 @@ settings.relayStatus = "DISCONNECTED"
 settings.relayHealth = "CHECKING"
 settings.modemStatus = "CHECKING"
 settings.modemCount = 0
+settings.connectedHosts = 0
 
 if settings.gatewayEnabled then
     settings.gatewayStatus = "STARTING"
@@ -141,6 +142,9 @@ local function modemHardwareLoop()
     modem.run()
 end
 
+local function localGatewayLoop()
+    localGateway.run(settings)
+end
 
 local function modemStateLoop()
     while running do
@@ -239,7 +243,8 @@ parallel.waitForAny(
     relayLoop,
     relayHealthLoop,
     modemHardwareLoop,
-    modemStateLoop
+    modemStateLoop,
+    localGatewayLoop
 )
 
 -- Close the persistent connection when exiting.
