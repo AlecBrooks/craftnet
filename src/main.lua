@@ -35,41 +35,9 @@ local function trim(value)
 end
 
 
-local function readInputOrStateChange()
-    local input = nil
-
-    local relayChanged = false
-    local relaySuccess = false
-    local relayMessage = nil
-
-    local refreshOnly = false
-
-    parallel.waitForAny(
-        function()
-            term.write("# ")
-            input = read()
-        end,
-
-        function()
-            local _, success, message =
-                os.pullEvent("craftnet_relay_state")
-
-            relayChanged = true
-            relaySuccess = success
-            relayMessage = message
-        end,
-
-        function()
-            os.pullEvent("craftnet_ui_refresh")
-            refreshOnly = true
-        end
-    )
-
-    return input,
-        relayChanged,
-        relaySuccess,
-        relayMessage,
-        refreshOnly
+local function readCommand()
+    term.write("# ")
+    return read()
 end
 
 
@@ -81,58 +49,68 @@ local function consoleLoop()
             currentView
         )
 
-        local input,
-            relayChanged,
-            relaySuccess,
-            relayMessage,
-            refreshOnly =
-                readInputOrStateChange()
+        local input =
+            trim(
+                readCommand()
+                or ""
+            )
 
-        if refreshOnly then
-            -- The loop immediately redraws the dashboard.
+        if input == "" then
+            notice = nil
 
-        elseif relayChanged then
+        elseif string.lower(input)
+            == "exit"
+        then
+            running = false
+
+        else
+            local success,
+                resultMessage,
+                requestedView =
+                    command.execute(
+                        input,
+                        settings,
+                        settingsManager
+                    )
+
+            if requestedView then
+                currentView =
+                    requestedView
+            end
+
             notice = {
-                text = relayMessage or "",
-                color = relaySuccess
+                text =
+                    resultMessage or "",
+
+                color =
+                    success
                     and colors.lime
                     or colors.red,
             }
-
-        else
-            input = trim(input or "")
-
-            if input == "" then
-                notice = nil
-
-            elseif string.lower(input) == "exit" then
-                running = false
-
-            else
-                local success,
-                    resultMessage,
-                    requestedView =
-                        command.execute(
-                            input,
-                            settings,
-                            settingsManager
-                        )
-                if requestedView then
-                    currentView =
-                        requestedView
-                end
-
-                notice = {
-                    text = resultMessage or "",
-                    color = success
-                        and colors.lime
-                        or colors.red,
-                }
-            end
         end
     end
 end
 
+local function relayNoticeLoop()
+    while running do
+        local _,
+            success,
+            message =
+                os.pullEvent(
+                    "craftnet_relay_state"
+                )
+
+        notice = {
+            text =
+                tostring(message or ""),
+
+            color =
+                success
+                and colors.lime
+                or colors.red,
+        }
+    end
+end
 
 local function relayLoop()
     relay.run(settings)
@@ -241,6 +219,7 @@ ui.getLocalEnv()
 parallel.waitForAny(
     consoleLoop,
     relayLoop,
+    relayNoticeLoop,
     relayHealthLoop,
     modemHardwareLoop,
     modemStateLoop,
