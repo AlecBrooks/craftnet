@@ -80,8 +80,14 @@ local function runTerminal()
     while running
         and currentView == "term"
     do
-        term.setTextColor(colors.white)
-        term.setBackgroundColor(colors.black)
+        term.setTextColor(
+            colors.white
+        )
+
+        term.setBackgroundColor(
+            colors.black
+        )
+
         term.write("$ ")
 
         local input =
@@ -96,25 +102,82 @@ local function runTerminal()
             term.setCursorPos(1, 1)
 
         elseif input ~= "" then
-            local success, errorMessage =
-                pcall(
-                    shell.run,
-                    input
-                )
+            if command.isGatewayCommand(
+                input
+            ) then
+                local success,
+                    resultMessage,
+                    requestedView =
+                        command.execute(
+                            input,
+                            settings,
+                            settingsManager
+                        )
 
-            if not success then
-                term.setTextColor(colors.red)
-                print(
-                    tostring(errorMessage)
-                )
+                if resultMessage
+                    and resultMessage ~= ""
+                then
+                    term.setTextColor(
+                        success
+                        and colors.lime
+                        or colors.red
+                    )
+
+                    print(resultMessage)
+                end
+
+                if requestedView then
+                    currentView =
+                        requestedView
+                end
+
+            else
+                local callSucceeded,
+                    programSucceeded,
+                    shellError =
+                        pcall(
+                            shell.run,
+                            input
+                        )
+
+                if not callSucceeded then
+                    term.setTextColor(
+                        colors.red
+                    )
+
+                    print(
+                        tostring(
+                            programSucceeded
+                        )
+                    )
+
+                elseif programSucceeded
+                    == false
+                then
+                    term.setTextColor(
+                        colors.red
+                    )
+
+                    if shellError then
+                        print(
+                            tostring(
+                                shellError
+                            )
+                        )
+                    end
+                end
             end
         end
     end
 
-    term.redirect(previousTerminal)
-    terminalWindow.setVisible(false)
-end
+    term.redirect(
+        previousTerminal
+    )
 
+    terminalWindow.setVisible(
+        false
+    )
+end
 
 local function consoleLoop()
     while running do

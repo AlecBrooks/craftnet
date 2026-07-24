@@ -7,9 +7,17 @@ protocol.VERSION = 1
 protocol.TYPES = {
     hello = true,
     welcome = true,
+
     packet = true,
     request = true,
     response = true,
+
+    domain_register = true,
+    domain_registered = true,
+
+    domain_clear = true,
+    domain_cleared = true,
+
     error = true,
     ping = true,
     pong = true,
@@ -50,30 +58,64 @@ local function isValidReturnToken(value)
         and value:match("^[%w_-]+$") ~= nil
 end
 
+local function isValidGatewayKey(value)
+    return type(value) == "string"
+        and #value >= 32
+        and #value <= 128
+        and value:match(
+            "^[%w_-]+$"
+        ) ~= nil
+end
+
 local function validateHello(payload)
-    if type(payload.gatewayId) ~= "number" then
+    if type(payload.gatewayId)
+        ~= "number"
+    then
         return false,
             "hello.gatewayId must be a number."
     end
 
-    if not isNonEmptyString(payload.clientVersion) then
+    if not isNonEmptyString(
+        payload.clientVersion
+    ) then
         return false,
             "hello.clientVersion must be a string."
+    end
+
+    if not isValidGatewayKey(
+        payload.gatewayKey
+    ) then
+        return false,
+            "hello.gatewayKey must contain "
+            .. "32 to 128 letters, numbers, "
+            .. "underscores, or hyphens."
     end
 
     return true
 end
 
-
 local function validateWelcome(payload)
-    if not isNonEmptyString(payload.sessionId) then
+    if not isNonEmptyString(
+        payload.sessionId
+    ) then
         return false,
             "welcome.sessionId must be a string."
     end
 
-    if not isNonEmptyString(payload.publicAddress) then
+    if not isNonEmptyString(
+        payload.publicAddress
+    ) then
         return false,
             "welcome.publicAddress must be a string."
+    end
+
+    if payload.registeredDomain ~= nil
+        and not isNonEmptyString(
+            payload.registeredDomain
+        )
+    then
+        return false,
+            "welcome.registeredDomain must be a string."
     end
 
     return true
@@ -178,6 +220,110 @@ local function validateResponse(payload)
     return true
 end
 
+local function validateDomainRegister(
+    payload
+)
+    if not isNonEmptyString(
+        payload.domain
+    ) then
+        return false,
+            "domain_register.domain must be a string."
+    end
+
+    if not isNonEmptyString(
+        payload.domainKey
+    ) then
+        return false,
+            "domain_register.domainKey must be a string."
+    end
+
+    return true
+end
+
+
+local function validateDomainRegistered(
+    payload
+)
+    if not isNonEmptyString(
+        payload.replyTo
+    ) then
+        return false,
+            "domain_registered.replyTo must be a message ID."
+    end
+
+    if not isNonEmptyString(
+        payload.domain
+    ) then
+        return false,
+            "domain_registered.domain must be a string."
+    end
+
+    if not isNonEmptyString(
+        payload.publicAddress
+    ) then
+        return false,
+            "domain_registered.publicAddress must be a string."
+    end
+
+    if type(payload.alreadyOwned)
+        ~= "boolean"
+    then
+        return false,
+            "domain_registered.alreadyOwned must be boolean."
+    end
+
+    return true
+end
+
+
+local function validateDomainClear(
+    payload
+)
+    if not isNonEmptyString(
+        payload.domain
+    ) then
+        return false,
+            "domain_clear.domain must be a string."
+    end
+
+    if not isNonEmptyString(
+        payload.domainKey
+    ) then
+        return false,
+            "domain_clear.domainKey must be a string."
+    end
+
+    return true
+end
+
+
+local function validateDomainCleared(
+    payload
+)
+    if not isNonEmptyString(
+        payload.replyTo
+    ) then
+        return false,
+            "domain_cleared.replyTo must be a message ID."
+    end
+
+    if not isNonEmptyString(
+        payload.domain
+    ) then
+        return false,
+            "domain_cleared.domain must be a string."
+    end
+
+    if not isNonEmptyString(
+        payload.publicAddress
+    ) then
+        return false,
+            "domain_cleared.publicAddress must be a string."
+    end
+
+    return true
+end
+
 local function validateError(payload)
     if not isNonEmptyString(payload.replyTo) then
         return false,
@@ -225,9 +371,23 @@ end
 local validators = {
     hello = validateHello,
     welcome = validateWelcome,
+
     packet = validatePacket,
     request = validateRequest,
     response = validateResponse,
+
+    domain_register =
+        validateDomainRegister,
+
+    domain_registered =
+        validateDomainRegistered,
+
+    domain_clear =
+        validateDomainClear,
+
+    domain_cleared =
+        validateDomainCleared,
+
     error = validateError,
     ping = validatePing,
     pong = validatePong,
@@ -338,19 +498,57 @@ function protocol.decode(encoded)
 end
 
 
-function protocol.newHello(clientVersion)
-    return createMessage("hello", {
-        gatewayId = os.getComputerID(),
-        clientVersion = clientVersion,
-    })
-end
+function protocol.newHello(
+    clientVersion,
+    gatewayKey
+)
+    return createMessage(
+        "hello",
+        {
+            gatewayId =
+                os.getComputerID(),
 
+            clientVersion =
+                clientVersion,
+
+            gatewayKey =
+                gatewayKey,
+        }
+    )
+end
 
 function protocol.newWelcome(sessionId, publicAddress)
     return createMessage("welcome", {
         sessionId = sessionId,
         publicAddress = publicAddress,
     })
+end
+
+function protocol.newDomainRegister(
+    domain,
+    domainKey
+)
+    return createMessage(
+        "domain_register",
+        {
+            domain = domain,
+            domainKey = domainKey,
+        }
+    )
+end
+
+
+function protocol.newDomainClear(
+    domain,
+    domainKey
+)
+    return createMessage(
+        "domain_clear",
+        {
+            domain = domain,
+            domainKey = domainKey,
+        }
+    )
 end
 
 function protocol.newPacket(

@@ -26,6 +26,7 @@ local lastMessage = nil
 local lastProtocolError = nil
 local lastRejected = nil
 
+local pendingDomainRequests = {}
 
 local function closeQuietly(socket)
     if socket then
@@ -106,6 +107,38 @@ local function sendProtocolMessage(settings, message)
     return true
 end
 
+local function waitForDomainResult(
+    requestId
+)
+    local timer =
+        os.startTimer(15)
+
+    while true do
+        local event,
+            value1,
+            value2,
+            value3 =
+                os.pullEvent()
+
+        if event
+            == "craftnet_domain_result"
+            and value1 == requestId
+        then
+            return value2, value3
+        end
+
+        if event == "timer"
+            and value1 == timer
+        then
+            pendingDomainRequests[
+                requestId
+            ] = nil
+
+            return false,
+                "Domain request timed out."
+        end
+    end
+end
 
 local function isPortOpen(settings, port)
     if type(settings.openPorts) ~= "table" then
@@ -365,7 +398,88 @@ local function handleProtocolMessage(
     settings,
     message
 )
-    if message.type == "packet" 
+    if message.type
+        == "domain_registered"
+    then
+        local payload =
+            message.payload or {}
+
+        local replyTo =
+            payload.replyTo
+
+        settings.registeredDomain =
+            payload.domain
+
+        settings.publicAddress =
+            payload.publicAddress
+            or payload.domain
+
+        pendingDomainRequests[
+            replyTo
+        ] = nil
+
+        local resultMessage
+
+        if payload.alreadyOwned then
+            resultMessage =
+                "Domain already registered: "
+                .. tostring(
+                    payload.domain
+                )
+        else
+            resultMessage =
+                "Domain registered: "
+                .. tostring(
+                    payload.domain
+                )
+        end
+
+        os.queueEvent(
+            "craftnet_domain_result",
+            replyTo,
+            true,
+            resultMessage
+        )
+
+        os.queueEvent(
+            "craftnet_ui_refresh"
+        )
+
+    elseif message.type
+        == "domain_cleared"
+    then
+        local payload =
+            message.payload or {}
+
+        local replyTo =
+            payload.replyTo
+
+        settings.registeredDomain =
+            false
+
+        settings.publicAddress =
+            payload.publicAddress
+            or "Unassigned"
+
+        pendingDomainRequests[
+            replyTo
+        ] = nil
+
+        os.queueEvent(
+            "craftnet_domain_result",
+            replyTo,
+            true,
+            "Domain cleared: "
+                .. tostring(
+                    payload.domain
+                )
+        )
+
+        os.queueEvent(
+            "craftnet_ui_refresh"
+        )
+
+    elseif message.type == "packet"
         or message.type == "request"
     then
         local payload =
@@ -380,7 +494,9 @@ local function handleProtocolMessage(
         ) then
             local reason =
                 "Port "
-                .. tostring(destinationPort)
+                .. tostring(
+                    destinationPort
+                )
                 .. " is closed on "
                 .. tostring(
                     settings.publicAddress
@@ -434,41 +550,68 @@ local function handleProtocolMessage(
                 returnErrorCode
                     or "RETURN_REJECTED",
                 returnErrorMessage
-                    or "The returned response "
-                    .. "was rejected."
+                    or "The returned response was rejected."
             )
 
             return
         end
 
     elseif message.type == "error" then
-        local matchedRequest,
-            delivered,
-            deliveryErrorCode,
-            deliveryErrorMessage =
-                routeRequestError(
-                    message
-                )
+        local payload =
+            message.payload or {}
 
-        if matchedRequest
-            and not delivered
-        then
-            rejectReturn(
-                message,
-                deliveryErrorCode
-                    or "ERROR_DELIVERY_FAILED",
-                deliveryErrorMessage
-                    or "The remote request "
-                    .. "error could not be "
-                    .. "delivered locally."
+        local replyTo =
+            payload.replyTo
+
+        if pendingDomainRequests[
+            replyTo
+        ] then
+            pendingDomainRequests[
+                replyTo
+            ] = nil
+
+            os.queueEvent(
+                "craftnet_domain_result",
+                replyTo,
+                false,
+                tostring(
+                    payload.code
+                    or "DOMAIN_ERROR"
+                )
+                    .. ": "
+                    .. tostring(
+                        payload.message
+                        or "Domain request failed."
+                    )
             )
 
-            return
+        else
+            local matchedRequest,
+                delivered,
+                deliveryErrorCode,
+                deliveryErrorMessage =
+                    routeRequestError(
+                        message
+                    )
+
+            if matchedRequest
+                and not delivered
+            then
+                rejectReturn(
+                    message,
+                    deliveryErrorCode
+                        or "ERROR_DELIVERY_FAILED",
+                    deliveryErrorMessage
+                        or "The remote request error "
+                        .. "could not be delivered locally."
+                )
+
+                return
+            end
         end
     end
 
     lastMessage = message
-
     lastProtocolError = nil
 
     os.queueEvent(
@@ -479,13 +622,16 @@ local function handleProtocolMessage(
 
     if message.type == "ping" then
         local pong =
-            protocol.newPong(message.id)
-
-        local sent, sendError =
-            sendProtocolMessage(
-                settings,
-                pong
+            protocol.newPong(
+                message.id
             )
+
+        local sent,
+            sendError =
+                sendProtocolMessage(
+                    settings,
+                    pong
+                )
 
         if not sent then
             announceClosed(sendError)
@@ -548,7 +694,10 @@ function relay.connect(settings)
 
     -- Encode and send the initial CraftNet handshake.
     local hello =
-        protocol.newHello(config.version)
+        protocol.newHello(
+            config.version,
+            settings.gatewayKey
+        )
 
     local encodedHello, encodeError =
         protocol.encode(hello)
@@ -644,6 +793,10 @@ function relay.connect(settings)
 
     settings.publicAddress =
         welcome.payload.publicAddress
+
+    settings.registeredDomain =
+        welcome.payload.registeredDomain
+        or false
 
     settings.relayStatus = "CONNECTED"
 
@@ -758,6 +911,87 @@ function relay.sendPacket(
         .. " ["
         .. packet.id
         .. "]"
+end
+
+function relay.registerDomain(
+    settings,
+    domain,
+    domainKey
+)
+    if not activeSocket then
+        return false,
+            "Relay is not connected."
+    end
+
+    local request =
+        protocol.newDomainRegister(
+            domain,
+            domainKey
+        )
+
+    pendingDomainRequests[
+        request.id
+    ] = true
+
+    local sent,
+        sendError =
+            sendProtocolMessage(
+                settings,
+                request
+            )
+
+    if not sent then
+        pendingDomainRequests[
+            request.id
+        ] = nil
+
+        return false, sendError
+    end
+
+    return waitForDomainResult(
+        request.id
+    )
+end
+
+
+function relay.clearDomain(
+    settings,
+    domain,
+    domainKey
+)
+    if not activeSocket then
+        return false,
+            "Relay is not connected."
+    end
+
+    local request =
+        protocol.newDomainClear(
+            domain,
+            domainKey
+        )
+
+    pendingDomainRequests[
+        request.id
+    ] = true
+
+    local sent,
+        sendError =
+            sendProtocolMessage(
+                settings,
+                request
+            )
+
+    if not sent then
+        pendingDomainRequests[
+            request.id
+        ] = nil
+
+        return false, sendError
+    end
+
+    return waitForDomainResult(
+        request.id
+    )
 end
 
 function relay.ping(settings)
