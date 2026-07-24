@@ -498,44 +498,79 @@ function ui.drawUI(
     settings = settings or {}
 
     currentView =
-    tostring(
-        currentView or "status"
-    )
+        tostring(
+            currentView or "status"
+        )
 
     local gatewayStatus =
-        tostring(settings.gatewayStatus or "UNKNOWN")
+        tostring(
+            settings.gatewayStatus
+            or "UNKNOWN"
+        )
 
     local account =
-        tostring(settings.account or "Not logged in")
+        tostring(
+            settings.account
+            or "Not logged in"
+        )
 
     local relayStatus =
-        tostring(settings.relayStatus or "DISCONNECTED")
+        tostring(
+            settings.relayStatus
+            or "DISCONNECTED"
+        )
 
     local relayHealth =
-        tostring(settings.relayHealth or "CHECKING")
+        tostring(
+            settings.relayHealth
+            or "CHECKING"
+        )
 
     local modemStatus =
-    tostring(settings.modemStatus or "CHECKING")
+        tostring(
+            settings.modemStatus
+            or "CHECKING"
+        )
 
     local publicAddress =
-        tostring(settings.publicAddress or "Unassigned")
+        tostring(
+            settings.publicAddress
+            or "Unassigned"
+        )
 
     local openPorts =
-        formatPorts(settings.openPorts)
+        formatPorts(
+            settings.openPorts
+        )
 
     local connectedHosts =
-        tonumber(settings.connectedHosts) or 0
+        tonumber(
+            settings.connectedHosts
+        ) or 0
 
-    term.setBackgroundColor(colors.blue)
-    term.setTextColor(colors.white)
+    term.setBackgroundColor(
+        colors.blue
+    )
+
+    term.setTextColor(
+        colors.white
+    )
+
     term.clear()
 
     -- Header
-    term.setCursorPos(header_x, header_y)
-    term.setBackgroundColor(colors.magenta)
+    term.setCursorPos(
+        header_x,
+        header_y
+    )
+
+    term.setBackgroundColor(
+        colors.magenta
+    )
+
     term.write(message)
 
-    -- Status frame
+    -- Main frame
     local frame_x1 = 2
     local frame_y1 = 3
     local frame_x2 = width - 1
@@ -558,100 +593,165 @@ function ui.drawUI(
         modemStatus
     )
 
-    if currentView == "ports" then
-    drawPortsTable(
-        settings,
-        frame_x1,
-        frame_y1,
-        frame_x2,
-        frame_y2
-    )
+    if currentView == "term" then
+        local title =
+            "System Terminal"
+
+        local titleX =
+            math.floor(
+                (
+                    frame_x1
+                    + frame_x2
+                    - #title
+                ) / 2
+            ) + 1
+
+        term.setBackgroundColor(
+            colors.blue
+        )
+
+        term.setTextColor(
+            colors.white
+        )
+
+        term.setCursorPos(
+            titleX,
+            frame_y1 + 1
+        )
+
+        term.write(title)
+
+    elseif currentView == "ports" then
+        drawPortsTable(
+            settings,
+            frame_x1,
+            frame_y1,
+            frame_x2,
+            frame_y2
+        )
+
     else
+        -- Status rows
+        local status_x =
+            frame_x1 + 2
 
-    -- Status rows
-    local status_x = frame_x1 + 2
-    local status_y = frame_y1 + 2
+        local status_y =
+            frame_y1 + 2
 
-    drawStatusRow(
-        status_x,
-        status_y,
-        "Gateway status:",
-        gatewayStatus,
-        getGatewayStatusColor(gatewayStatus)
-    )
+        drawStatusRow(
+            status_x,
+            status_y,
+            "Gateway status:",
+            gatewayStatus,
+            getGatewayStatusColor(
+                gatewayStatus
+            )
+        )
 
-    drawStatusRow(
-        status_x,
-        status_y + 2,
-        "Account:",
-        account,
-        account == "Not logged in"
-            and colors.yellow
-            or colors.white
-    )
+        drawStatusRow(
+            status_x,
+            status_y + 2,
+            "Account:",
+            account,
+            account == "Not logged in"
+                and colors.yellow
+                or colors.white
+        )
 
-    drawStatusRow(
-        status_x,
-        status_y + 4,
-        "Relay status:",
-        relayStatus,
-        getRelayStatusColor(relayStatus)
-    )
+        drawStatusRow(
+            status_x,
+            status_y + 4,
+            "Relay status:",
+            relayStatus,
+            getRelayStatusColor(
+                relayStatus
+            )
+        )
 
-    drawStatusRow(
-        status_x,
-        status_y + 6,
-        "Public address:",
-        publicAddress,
-        colors.lightGray
-    )
+        drawStatusRow(
+            status_x,
+            status_y + 6,
+            "Public address:",
+            publicAddress,
+            colors.lightGray
+        )
 
-    drawStatusRow(
-        status_x,
-        status_y + 8,
-        "Open ports:",
-        openPorts,
-        colors.lightGray
-    )
+        drawStatusRow(
+            status_x,
+            status_y + 8,
+            "Open ports:",
+            openPorts,
+            colors.lightGray
+        )
 
-    drawStatusRow(
-        status_x,
-        status_y + 10,
-        "Connected hosts:",
-        connectedHosts,
-        colors.white
-    )
-end
+        drawStatusRow(
+            status_x,
+            status_y + 10,
+            "Connected hosts:",
+            connectedHosts,
+            colors.white
+        )
+    end
+
     -- Command result
     if notice
         and notice.text
         and notice.text ~= ""
     then
-        term.setBackgroundColor(colors.blue)
-        term.setTextColor(
-            notice.color or colors.white
+        term.setBackgroundColor(
+            colors.blue
         )
 
-        term.setCursorPos(1, height - 1)
+        term.setTextColor(
+            notice.color
+            or colors.white
+        )
+
+        term.setCursorPos(
+            1,
+            height - 1
+        )
+
         term.clearLine()
 
-        term.setCursorPos(2, height - 1)
+        term.setCursorPos(
+            2,
+            height - 1
+        )
 
-        local maximumLength = width - 2
+        local maximumLength =
+            width - 2
+
         term.write(
-            notice.text:sub(1, maximumLength)
+            notice.text:sub(
+                1,
+                maximumLength
+            )
         )
     end
 
-    -- Input prompt position
-    term.setBackgroundColor(colors.blue)
-    term.setTextColor(colors.white)
+    -- Gateway command prompt
+    if currentView ~= "term" then
+        term.setBackgroundColor(
+            colors.blue
+        )
 
-    term.setCursorPos(1, height)
-    term.clearLine()
+        term.setTextColor(
+            colors.white
+        )
 
-    term.setCursorPos(2, height)
+        term.setCursorPos(
+            1,
+            height
+        )
+
+        term.clearLine()
+
+        term.setCursorPos(
+            2,
+            height
+        )
+    end
 end
-
 
 return ui

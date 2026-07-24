@@ -10,6 +10,9 @@ function systemCommand.run(arguments)
     if action == "status" then
         return true, "", "status"
 
+    elseif action == "term" then
+        return true, "", "term"
+
     elseif action == "clear" then
         return true, ""
 
@@ -21,7 +24,7 @@ function systemCommand.run(arguments)
     end
 
     return false,
-        "Usage: system status | system clear | system reboot | system shutdown"
+        "Usage: system status | system term | system clear | system reboot | system shutdown"
 end
 
 

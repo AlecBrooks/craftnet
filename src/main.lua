@@ -28,7 +28,7 @@ end
 local running = true
 local notice = nil
 local currentView = "status"
-
+local terminalWindow = nil
 
 local function trim(value)
     return value:match("^%s*(.-)%s*$")
@@ -40,6 +40,81 @@ local function readCommand()
     return read()
 end
 
+local function createTerminalWindow()
+    local width, height =
+        term.getSize()
+
+    terminalWindow =
+        window.create(
+            term.current(),
+            3,
+            4,
+            width - 4,
+            height - 6,
+            false
+        )
+
+    terminalWindow.setBackgroundColor(
+        colors.black
+    )
+
+    terminalWindow.setTextColor(
+        colors.white
+    )
+
+    terminalWindow.clear()
+    terminalWindow.setCursorPos(1, 1)
+end
+
+
+local function runTerminal()
+    if not terminalWindow then
+        createTerminalWindow()
+    end
+
+    terminalWindow.setVisible(true)
+
+    local previousTerminal =
+        term.redirect(terminalWindow)
+
+    while running
+        and currentView == "term"
+    do
+        term.setTextColor(colors.white)
+        term.setBackgroundColor(colors.black)
+        term.write("$ ")
+
+        local input =
+            trim(read() or "")
+
+        if input == "exit" then
+            currentView = "status"
+            notice = nil
+
+        elseif input == "clear" then
+            term.clear()
+            term.setCursorPos(1, 1)
+
+        elseif input ~= "" then
+            local success, errorMessage =
+                pcall(
+                    shell.run,
+                    input
+                )
+
+            if not success then
+                term.setTextColor(colors.red)
+                print(
+                    tostring(errorMessage)
+                )
+            end
+        end
+    end
+
+    term.redirect(previousTerminal)
+    terminalWindow.setVisible(false)
+end
+
 
 local function consoleLoop()
     while running do
@@ -49,44 +124,49 @@ local function consoleLoop()
             currentView
         )
 
-        local input =
-            trim(
-                readCommand()
-                or ""
-            )
-
-        if input == "" then
-            notice = nil
-
-        elseif string.lower(input)
-            == "exit"
-        then
-            running = false
+        if currentView == "term" then
+            runTerminal()
 
         else
-            local success,
-                resultMessage,
-                requestedView =
-                    command.execute(
-                        input,
-                        settings,
-                        settingsManager
-                    )
+            local input =
+                trim(
+                    readCommand()
+                    or ""
+                )
 
-            if requestedView then
-                currentView =
-                    requestedView
+            if input == "" then
+                notice = nil
+
+            elseif string.lower(input)
+                == "exit"
+            then
+                running = false
+
+            else
+                local success,
+                    resultMessage,
+                    requestedView =
+                        command.execute(
+                            input,
+                            settings,
+                            settingsManager
+                        )
+
+                if requestedView then
+                    currentView =
+                        requestedView
+                end
+
+                notice = {
+                    text =
+                        resultMessage or "",
+
+                    color =
+                        success
+                        and colors.lime
+                        or colors.red,
+                }
             end
-
-            notice = {
-                text =
-                    resultMessage or "",
-
-                color =
-                    success
-                    and colors.lime
-                    or colors.red,
-            }
         end
     end
 end
