@@ -117,14 +117,17 @@ local function waitForDomainResult(
         local event,
             value1,
             value2,
-            value3 =
+            value3,
+            value4 =
                 os.pullEvent()
 
         if event
             == "craftnet_domain_result"
             and value1 == requestId
         then
-            return value2, value3
+            return value2,
+                value3,
+                value4
         end
 
         if event == "timer"
@@ -438,7 +441,8 @@ local function handleProtocolMessage(
             "craftnet_domain_result",
             replyTo,
             true,
-            resultMessage
+            resultMessage,
+            payload.managementKey
         )
 
         os.queueEvent(
@@ -810,6 +814,14 @@ function relay.connect(settings)
         welcome.id
     )
 
+    if settings.publicAddress
+        == "Unassigned"
+    then
+        return true,
+            "Relay connected. Register a domain "
+            .. "before sending traffic."
+    end
+
     return true,
         "Relay connected as "
         .. settings.publicAddress
@@ -957,7 +969,7 @@ end
 function relay.clearDomain(
     settings,
     domain,
-    domainKey
+    managementKey
 )
     if not activeSocket then
         return false,
@@ -967,7 +979,7 @@ function relay.clearDomain(
     local request =
         protocol.newDomainClear(
             domain,
-            domainKey
+            managementKey
         )
 
     pendingDomainRequests[

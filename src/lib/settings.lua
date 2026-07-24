@@ -67,6 +67,8 @@ local function getDefaults()
 
         registeredDomain = false,
 
+        domainManagementKeys = {},
+
         gatewayKey =
             generateGatewayKey(),
 

@@ -36,31 +36,8 @@ local function normalizeDomain(value)
 end
 
 
-local function readDomainKey()
-    local _, height =
-        term.getSize()
-
-    term.setBackgroundColor(
-        colors.blue
-    )
-
-    term.setTextColor(
-        colors.white
-    )
-
-    term.setCursorPos(
-        1,
-        height
-    )
-
-    term.clearLine()
-
-    term.setCursorPos(
-        2,
-        height
-    )
-
-    term.write("Domain key: ")
+local function readSecret(label)
+    term.write(label)
 
     return trim(
         read("*") or ""
@@ -68,21 +45,216 @@ local function readDomainKey()
 end
 
 
-local function getDomainKey(arguments)
-    local domainKey =
+local function getRegistrationKey(
+    arguments
+)
+    local registrationKey =
         trim(arguments[3])
 
-    if domainKey == "" then
-        domainKey =
-            readDomainKey()
+    if registrationKey == "" then
+        registrationKey =
+            readSecret(
+                "Registration key: "
+            )
     end
 
-    if domainKey == "" then
+    if registrationKey == "" then
         return nil,
-            "Domain key is required."
+            "Registration key is required."
     end
 
-    return domainKey
+    return registrationKey
+end
+
+
+local function getManagementKey(
+    arguments,
+    settings,
+    domain
+)
+    local managementKey =
+        trim(arguments[3])
+
+    if managementKey ~= "" then
+        return managementKey
+    end
+
+    local savedKeys =
+        settings.domainManagementKeys
+
+    if type(savedKeys) == "table" then
+        managementKey =
+            trim(savedKeys[domain])
+
+        if managementKey ~= "" then
+            return managementKey
+        end
+    end
+
+    managementKey =
+        readSecret(
+            "Management key: "
+        )
+
+    if managementKey == "" then
+        return nil,
+            "Management key is required."
+    end
+
+    return managementKey
+end
+
+
+local function registerDomain(
+    arguments,
+    settings,
+    settingsManager,
+    domain
+)
+    local registrationKey,
+        keyError =
+            getRegistrationKey(
+                arguments
+            )
+
+    if not registrationKey then
+        return false, keyError
+    end
+
+    local success,
+        resultMessage,
+        managementKey =
+            relay.registerDomain(
+                settings,
+                domain,
+                registrationKey
+            )
+
+    if not success then
+        return false, resultMessage
+    end
+
+    settings.registeredDomain =
+        domain
+
+    settings.publicAddress =
+        domain
+
+    if managementKey then
+        if type(
+            settings.domainManagementKeys
+        ) ~= "table"
+        then
+            settings.domainManagementKeys = {}
+        end
+
+        settings.domainManagementKeys[
+            domain
+        ] = managementKey
+    end
+
+    local saved,
+        saveError =
+            settingsManager.save(
+                settings
+            )
+
+    if not saved then
+        local message =
+            "Domain registered, but local "
+            .. "settings could not be saved: "
+            .. tostring(
+                saveError
+                or "Unknown error"
+            )
+
+        if managementKey then
+            message =
+                message
+                .. " Management key: "
+                .. managementKey
+        end
+
+        return false, message
+    end
+
+    if managementKey then
+        return true,
+            tostring(resultMessage)
+            .. "\nManagement key: "
+            .. managementKey
+    end
+
+    return true, resultMessage
+end
+
+
+local function clearDomain(
+    arguments,
+    settings,
+    settingsManager,
+    domain
+)
+    local managementKey,
+        keyError =
+            getManagementKey(
+                arguments,
+                settings,
+                domain
+            )
+
+    if not managementKey then
+        return false, keyError
+    end
+
+    local success,
+        resultMessage =
+            relay.clearDomain(
+                settings,
+                domain,
+                managementKey
+            )
+
+    if not success then
+        return false, resultMessage
+    end
+
+    if type(
+        settings.domainManagementKeys
+    ) == "table"
+    then
+        settings.domainManagementKeys[
+            domain
+        ] = nil
+    end
+
+    if settings.registeredDomain
+        == domain
+    then
+        settings.registeredDomain =
+            false
+
+        settings.publicAddress =
+            "Unassigned"
+    end
+
+    local saved,
+        saveError =
+            settingsManager.save(
+                settings
+            )
+
+    if not saved then
+        return false,
+            "Domain cleared, but local "
+            .. "settings could not be saved: "
+            .. tostring(
+                saveError
+                or "Unknown error"
+            )
+    end
+
+    return true, resultMessage
 end
 
 
@@ -100,8 +272,16 @@ function domainsCommand.run(
         and action ~= "clear"
     then
         return false,
-            "Usage: domains register <domain> [key] | "
-            .. "domains clear <domain> [key]"
+            "Usage: domains register "
+            .. "<domain> [registration-key] | "
+            .. "domains clear "
+            .. "<domain> [management-key]"
+    end
+
+    if not relay.isConnected() then
+        return false,
+            "Connect to the relay first: "
+            .. "relay connect"
     end
 
     local domain =
@@ -123,26 +303,20 @@ function domainsCommand.run(
             .. " <domain> [key]"
     end
 
-    local domainKey,
-        keyError =
-            getDomainKey(arguments)
-
-    if not domainKey then
-        return false, keyError
-    end
-
     if action == "register" then
-        return relay.registerDomain(
+        return registerDomain(
+            arguments,
             settings,
-            domain,
-            domainKey
+            settingsManager,
+            domain
         )
     end
 
-    return relay.clearDomain(
+    return clearDomain(
+        arguments,
         settings,
-        domain,
-        domainKey
+        settingsManager,
+        domain
     )
 end
 

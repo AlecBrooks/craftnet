@@ -272,6 +272,15 @@ local function validateDomainRegistered(
             "domain_registered.alreadyOwned must be boolean."
     end
 
+    if payload.managementKey ~= nil
+        and not isNonEmptyString(
+            payload.managementKey
+        )
+    then
+        return false,
+            "domain_registered.managementKey must be a string."
+    end
+
     return true
 end
 
@@ -287,10 +296,10 @@ local function validateDomainClear(
     end
 
     if not isNonEmptyString(
-        payload.domainKey
+        payload.managementKey
     ) then
         return false,
-            "domain_clear.domainKey must be a string."
+            "domain_clear.managementKey must be a string."
     end
 
     return true
@@ -537,16 +546,17 @@ function protocol.newDomainRegister(
     )
 end
 
-
 function protocol.newDomainClear(
     domain,
-    domainKey
+    managementKey
 )
     return createMessage(
         "domain_clear",
         {
             domain = domain,
-            domainKey = domainKey,
+
+            managementKey =
+                managementKey,
         }
     )
 end
