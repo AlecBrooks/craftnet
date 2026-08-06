@@ -182,6 +182,19 @@ local function validateResponse(payload)
             "response.data is required."
     end
 
+    -- Optional: the address the host believes it was reached at, so
+    -- its gateway can compose the reply's public source from that
+    -- instead of always defaulting to the host's own subdomain. Not
+    -- required, since older hosts won't send it.
+    if payload.respondingAs ~= nil
+        and not validate.isNonEmptyString(
+            payload.respondingAs
+        )
+    then
+        return false,
+            "response.respondingAs must be a string."
+    end
+
     return true
 end
 
@@ -426,7 +439,8 @@ function localProtocol.newResponse(
     destination,
     sourcePort,
     returnToken,
-    data
+    data,
+    respondingAs
 )
     return localProtocol.createMessage(
         "response",
@@ -443,6 +457,11 @@ function localProtocol.newResponse(
                 tostring(returnToken or ""),
 
             data = data,
+
+            respondingAs =
+                respondingAs ~= nil
+                and string.lower(tostring(respondingAs))
+                or nil,
         }
     )
 end

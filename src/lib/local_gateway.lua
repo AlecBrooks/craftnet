@@ -18,6 +18,9 @@ local returnSessions =
 local addresses =
     require("lib.addresses")
 
+local routes =
+    require("lib.routes")
+
 local settingsManager =
     require("lib.settings")
 
@@ -456,6 +459,66 @@ local function handleRequest(
     )
 end
 
+-- A host's reply normally claims to be from its own subdomain. But a
+-- request can reach a host through a route that isn't its own
+-- subdomain at all -- root, "@", or a NAT-style port forward -- and
+-- the reply needs to appear to come from whatever address the
+-- request actually arrived on, or the requester's gateway rejects it
+-- as a source mismatch (RETURN_SOURCE_MISMATCH). The host reports
+-- what it thinks that address was (claimedAddress, from the
+-- request's own "destination" field); this only trusts that claim
+-- after confirming the CURRENT routing table actually authorizes this
+-- specific host to answer for it, on the specific port it's replying
+-- from -- so a host can't claim an address it was never routed.
+local function resolveResponseSource(
+    settings,
+    senderId,
+    host,
+    claimedAddress,
+    port
+)
+    local ownAddress =
+        addresses.compose(
+            host.subdomain,
+            settings.publicAddress
+        )
+
+    if type(claimedAddress) ~= "string"
+        or claimedAddress == ""
+    then
+        return ownAddress
+    end
+
+    local subdomain =
+        addresses.decompose(
+            claimedAddress,
+            settings.publicAddress
+        )
+
+    if not subdomain then
+        return ownAddress
+    end
+
+    local route =
+        routes.get(
+            settings.openPorts,
+            subdomain,
+            port
+        )
+
+    if not route
+        or route.computerId ~= senderId
+    then
+        return ownAddress
+    end
+
+    return addresses.compose(
+        subdomain,
+        settings.publicAddress
+    )
+end
+
+
 local function handleResponse(
     settings,
     senderId,
@@ -499,9 +562,12 @@ local function handleResponse(
 
     local publicResponse =
         publicProtocol.newResponse(
-            addresses.compose(
-                host.subdomain,
-                settings.publicAddress
+            resolveResponseSource(
+                settings,
+                senderId,
+                host,
+                payload.respondingAs,
+                payload.sourcePort
             ),
             payload.sourcePort,
             payload.destination,

@@ -1394,12 +1394,21 @@ local function handleRequest(
                 "Response data is required."
         end
 
+        -- Optional -- nil if this reply's request never carried a
+        -- destination, or came from an older cnet.lua. The gateway
+        -- falls back to this host's own subdomain either way.
+        local respondingAs =
+            normalizeAddress(
+                payload.respondingAs
+            )
+
         local response =
             localProtocol.newResponse(
                 destination,
                 sourcePort,
                 token,
-                payload.data
+                payload.data,
+                respondingAs
             )
 
         local valid,

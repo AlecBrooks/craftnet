@@ -526,6 +526,17 @@ function cnet.reply(packet, data)
                     packet.returnToken,
 
                 data = data,
+
+                -- The address this request was actually
+                -- addressed to -- may differ from this
+                -- host's own subdomain if it arrived via
+                -- a root/wildcard/cross-subdomain route.
+                -- The gateway only trusts this after
+                -- checking it against the current routing
+                -- table, so a host can't claim to be an
+                -- address it isn't authorized for.
+                respondingAs =
+                    packet.destination,
             },
             10
         )
