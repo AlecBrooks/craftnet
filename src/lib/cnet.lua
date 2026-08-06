@@ -549,6 +549,50 @@ function cnet.reply(packet, data)
 end
 
 
+-- Convenience for testing: starts listening on a port (if not
+-- already), blocks until a request arrives (or timeout, if
+-- given -- omit for an unbounded wait), and immediately
+-- replies with the given data. Removes all human reaction
+-- time from a request/reply test, since the reply is sent the
+-- instant the request is queued rather than waiting on a
+-- second manual command.
+function cnet.await(port, data, timeout)
+    local listened, listenError =
+        cnet.listen(port)
+
+    if not listened then
+        return false, listenError
+    end
+
+    local packet, receiveError =
+        cnet.receive(port, timeout)
+
+    if not packet then
+        return false, receiveError
+    end
+
+    local replied, result =
+        cnet.reply(packet, data)
+
+    if not replied then
+        return false, result
+    end
+
+    return true,
+        {
+            message =
+                "Replied to a request from "
+                .. tostring(
+                    packet.source or "unknown"
+                )
+                .. ".",
+
+            packet = packet,
+            reply = result,
+        }
+end
+
+
 function cnet.last()
     local success, record =
         callDaemon("last")

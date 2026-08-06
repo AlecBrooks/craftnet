@@ -273,12 +273,13 @@ local function showHelp()
     print("  cnet status")
     print("  cnet ping")
     print("  cnet send <address> <port> <message>")
-    print("  cnet request <address> <port> <message>")
+    print("  cnet request <address> <port> [timeout] <message>")
     print("  cnet reply <message>")
     print("  cnet listen <port>")
     print("  cnet unlisten <port>")
     print("  cnet listeners")
     print("  cnet receive <port> [timeout]")
+    print("  cnet await <port> <reply message>")
     print("  cnet last")
     print("  cnet last rejected")
 end
@@ -381,11 +382,26 @@ elseif command == "request" then
     local port =
         arguments[2]
 
+    -- An optional timeout (seconds) may come right after the
+    -- port, before the message: if arguments[3] parses as a
+    -- plain number, it's treated as the timeout and the
+    -- message starts one word later. A message that itself
+    -- starts with a bare number needs a leading non-numeric
+    -- word to avoid this, or pass the default timeout as
+    -- normal and skip this entirely.
+    local timeout = nil
+    local messageStart = 3
+
+    if tonumber(arguments[3]) ~= nil then
+        timeout = tonumber(arguments[3])
+        messageStart = 4
+    end
+
     local message =
         table.concat(
             arguments,
             " ",
-            3
+            messageStart
         )
 
     local response,
@@ -393,7 +409,8 @@ elseif command == "request" then
             cnet.request(
                 destination,
                 port,
-                message
+                message,
+                timeout
             )
 
     if response then
@@ -526,6 +543,48 @@ elseif command == "receive" then
     else
         printColored(
             receiveError,
+            colors.red
+        )
+    end
+
+elseif command == "await" then
+    local port = arguments[1]
+
+    local message =
+        table.concat(
+            arguments,
+            " ",
+            2
+        )
+
+    if message == "" then
+        printError(
+            "Usage: cnet await <port> <reply message>"
+        )
+
+        return
+    end
+
+    printColored(
+        "Waiting for a request on port "
+            .. tostring(port)
+            .. " ...",
+        colors.yellow
+    )
+
+    local success, result =
+        cnet.await(port, message)
+
+    if success then
+        printColored(
+            result.message,
+            colors.lime
+        )
+
+        printPacket(result.packet)
+    else
+        printColored(
+            result,
             colors.red
         )
     end

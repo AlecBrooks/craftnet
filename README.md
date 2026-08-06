@@ -161,15 +161,22 @@ cnet disconnect                                    Forget the configured gateway
 cnet status                                        Show this host's CraftNet status
 cnet ping                                          Ping the configured gateway
 cnet send <address> <port> <message>               Send a one-way packet
-cnet request <address> <port> <message>            Send a packet and wait for a response
+cnet request <address> <port> [timeout] <message>  Send a request and wait for a response
+                                                    (timeout in seconds, default 5)
 cnet reply <message>                               Answer the last received packet or request
 cnet listen <port>                                 Start accepting packets on an internal port
 cnet unlisten <port>                                Stop listening on an internal port
 cnet listeners                                     List the ports currently being listened on
 cnet receive <port> [timeout]                       Wait for and return the next packet on a port
+cnet await <port> <reply message>                   Listen on a port, block until a request
+                                                    arrives, and reply immediately -- no manual
+                                                    `cnet reply` step, useful for testing since
+                                                    it removes human reaction time entirely
 cnet last                                          Show the last accepted packet
 cnet last rejected                                 Show the last packet the daemon rejected, and why
 ```
+
+`cnet request`'s default 5-second wait for a response can be tight for manual cross-computer testing, especially across two gateways (an extra relay hop). Give it more room with `cnet request <address> <port> 30 <message>` — the third argument is only treated as a timeout if it parses as a plain number, so an ordinary message is unaffected; a message that itself needs to start with a bare number should lead with a non-numeric word instead. `cnet await` sidesteps the timing question on the answering side entirely — set it up in advance and it replies the instant a request lands, whether that's half a second or five minutes later.
 
 ### `cnet` developer API
 
