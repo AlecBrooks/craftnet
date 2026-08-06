@@ -45,6 +45,7 @@ local PROFILES = {
             ["lib/validate.lua"] = true,
             ["lib/tokens.lua"] = true,
             ["lib/ids.lua"] = true,
+            ["lib/addresses.lua"] = true,
         },
     },
 }
