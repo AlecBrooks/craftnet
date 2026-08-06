@@ -56,8 +56,6 @@ local function getDefaults()
         gatewayEnabled = false,
         gatewayStatus = "OFFLINE",
 
-        account = "Not logged in",
-
         relayUrl =
             "wss://example.tweaked.cc/echo",
 

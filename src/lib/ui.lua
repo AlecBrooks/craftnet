@@ -508,12 +508,6 @@ function ui.drawUI(
             or "UNKNOWN"
         )
 
-    local account =
-        tostring(
-            settings.account
-            or "Not logged in"
-        )
-
     local relayStatus =
         tostring(
             settings.relayStatus
@@ -651,16 +645,6 @@ function ui.drawUI(
         drawStatusRow(
             status_x,
             status_y + 2,
-            "Account:",
-            account,
-            account == "Not logged in"
-                and colors.yellow
-                or colors.white
-        )
-
-        drawStatusRow(
-            status_x,
-            status_y + 4,
             "Relay status:",
             relayStatus,
             getRelayStatusColor(
@@ -670,7 +654,7 @@ function ui.drawUI(
 
         drawStatusRow(
             status_x,
-            status_y + 6,
+            status_y + 4,
             "Public address:",
             publicAddress,
             colors.lightGray
@@ -678,7 +662,7 @@ function ui.drawUI(
 
         drawStatusRow(
             status_x,
-            status_y + 8,
+            status_y + 6,
             "Open ports:",
             openPorts,
             colors.lightGray
@@ -686,7 +670,7 @@ function ui.drawUI(
 
         drawStatusRow(
             status_x,
-            status_y + 10,
+            status_y + 8,
             "Connected hosts:",
             connectedHosts,
             colors.white

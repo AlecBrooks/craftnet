@@ -4,7 +4,7 @@ CraftNet is a low-level networking layer for **CC:Tweaked** computers: gateways,
 
 A **Gateway** computer bridges Minecraft's in-world Rednet network to an external relay over a persistent WebSocket connection. That relay is meant to let gateways on different Minecraft servers exchange packets, register human-readable addresses, and expose virtual ports to each other. A **Host** computer reaches that same network indirectly, through a Gateway, over Rednet.
 
-CraftNet is in active development. The Gateway and Host client software is functional end-to-end against a public WebSocket echo server used for protocol testing. The real CraftNet relay server — the backend the echo server currently stands in for — has not yet been built.
+CraftNet is in active development. The Gateway and Host client software is functional end-to-end. A private test relay exists and is used for real development testing, but it isn't part of this repository; the public WebSocket echo server referenced below remains the out-of-the-box default for anyone testing the client protocol on its own, without access to that relay.
 
 ## Installing
 
@@ -37,7 +37,6 @@ The Gateway is the computer with real internet access. It owns the relay connect
 ![alt text](pics/image.png)
 ```text
 Gateway status
-Account
 Relay status
 Public address
 Open ports
@@ -97,7 +96,7 @@ The current development default relay is `wss://example.tweaked.cc/echo` — a p
 
 ### Domain commands
 
-A domain is a human-readable CraftNet address (always ending in `.craft`) that a relay can bind to a gateway's connection, replacing an opaque assigned address.
+A domain is a human-readable CraftNet address (always ending in `.craft`) that a relay can bind to a gateway's connection, replacing an opaque assigned address. There is no separate account or login step — a registered domain (or the opaque address assigned in its absence) is a gateway's whole identity on CraftNet.
 
 ```text
 domains register <domain> [registration-key]   Register a domain with the relay
@@ -288,9 +287,8 @@ Gateway settings live at `/craftnet-data/settings.lua`:
 
 ```text
 Gateway enabled state       Relay URL              Open ports (routing table)
-Gateway status               Relay status            Account state
-Public address                Registered domain       Domain management keys
-Gateway authentication key
+Gateway status               Relay status            Registered domain
+Public address                Domain management keys   Gateway authentication key
 ```
 
 Host settings live separately at `/craftnet-data/host.lua`:
@@ -363,7 +361,7 @@ craftnet/
 
 ### Relay and routing
 
-- [ ] Build the CraftNet relay server
+- [x] Private test relay (outside this repository)
 - [x] Send `hello` after connecting, authenticated with a gateway key
 - [x] Receive and validate `welcome`
 - [x] Promote authenticated gateways to `ONLINE`
