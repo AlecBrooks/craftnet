@@ -3,12 +3,10 @@ local domainsCommand = {}
 local relay =
     require("lib.relay")
 
+local validate =
+    require("lib.validate")
 
-local function trim(value)
-    return tostring(
-        value or ""
-    ):match("^%s*(.-)%s*$")
-end
+local trim = validate.trim
 
 
 local function normalizeDomain(value)

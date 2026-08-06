@@ -1,3 +1,6 @@
+local validate = require("lib.validate")
+local ids = require("lib.ids")
+
 local cnet = {}
 
 
@@ -10,33 +13,8 @@ local RESPONSE_EVENT =
 local DEFAULT_DAEMON_TIMEOUT = 5
 local DEFAULT_REQUEST_TIMEOUT = 5
 
-local requestCounter = 0
-
-
-local function newRequestId()
-    requestCounter = requestCounter + 1
-
-    return table.concat({
-        tostring(os.getComputerID()),
-        tostring(os.epoch("utc")),
-        tostring(requestCounter),
-    }, "-")
-end
-
-
-local function parsePort(value)
-    local port = tonumber(value)
-
-    if not port
-        or port ~= math.floor(port)
-        or port < 1
-        or port > 65535
-    then
-        return nil
-    end
-
-    return port
-end
+local newRequestId = ids.newGenerator()
+local parsePort = validate.parsePort
 
 
 local function callDaemon(

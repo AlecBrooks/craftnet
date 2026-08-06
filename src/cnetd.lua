@@ -4,6 +4,8 @@ local modem = require("lib.modem")
 local localProtocol =
     require("lib.local_protocol")
 local config = require("config")
+local validate = require("lib.validate")
+local tokens = require("lib.tokens")
 
 
 local DATA_DIRECTORY = "/craftnet-data"
@@ -50,7 +52,6 @@ local pendingPings = {}
 local pendingReturns = {}
 local pendingReturnMessages = {}
 local completedReturns = {}
-local returnCounter = 0
 
 local lastAccepted = nil
 local lastRejected = nil
@@ -61,71 +62,16 @@ local function now()
     return os.epoch("utc")
 end
 
-local RETURN_TOKEN_LENGTH = 24
 
-local RETURN_TOKEN_CHARACTERS =
-    "abcdefghijklmnopqrstuvwxyz"
-    .. "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    .. "0123456789"
+local normalizeAddress = validate.normalizeAddress
+local isValidReturnToken = tokens.isValidReturnToken
 
-
-local function normalizeAddress(address)
-    if type(address) ~= "string" then
-        return nil
-    end
-
-    address =
-        string.lower(
-            address:match("^%s*(.-)%s*$")
-            or ""
-        )
-
-    if address == "" then
-        return nil
-    end
-
-    return address
-end
-
-local function isValidReturnToken(value)
-    return type(value) == "string"
-        and #value >= 8
-        and #value <= 64
-        and value:match("^[%w_-]+$") ~= nil
-end
 
 local function newReturnToken()
-    local token = nil
-
-    repeat
-        returnCounter =
-            returnCounter + 1
-
-        local characters = {}
-
-        for index = 1,
-            RETURN_TOKEN_LENGTH
-        do
-            local position =
-                math.random(
-                    1,
-                    #RETURN_TOKEN_CHARACTERS
-                )
-
-            characters[index] =
-                RETURN_TOKEN_CHARACTERS:sub(
-                    position,
-                    position
-                )
-        end
-
-        token =
-            table.concat(characters)
-
-    until not pendingReturns[token]
-        and not completedReturns[token]
-
-    return token
+    return tokens.newReturnToken(function(candidate)
+        return pendingReturns[candidate] ~= nil
+            or completedReturns[candidate] ~= nil
+    end)
 end
 
 
@@ -267,19 +213,8 @@ local function queueReturnResponse(
     )
 end
 
-local function isValidComputerId(value)
-    return type(value) == "number"
-        and value == math.floor(value)
-        and value >= 0
-end
-
-
-local function isValidPort(value)
-    return type(value) == "number"
-        and value == math.floor(value)
-        and value >= 1
-        and value <= 65535
-end
+local isValidComputerId = validate.isValidComputerId
+local isValidPort = validate.isValidPort
 
 
 local function getDefaults()

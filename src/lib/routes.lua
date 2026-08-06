@@ -1,33 +1,9 @@
+local validate = require("lib.validate")
+
 local routes = {}
 
-
-local function parsePort(value)
-    local port = tonumber(value)
-
-    if not port
-        or port ~= math.floor(port)
-        or port < 1
-        or port > 65535
-    then
-        return nil
-    end
-
-    return port
-end
-
-
-local function parseComputerId(value)
-    local computerId = tonumber(value)
-
-    if not computerId
-        or computerId ~= math.floor(computerId)
-        or computerId < 0
-    then
-        return nil
-    end
-
-    return computerId
-end
+local parsePort = validate.parsePort
+local parseComputerId = validate.parseComputerId
 
 
 function routes.parsePort(value)

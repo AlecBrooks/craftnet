@@ -41,6 +41,10 @@ local PROFILES = {
             ["lib/modem.lua"] = true,
             ["lib/local_protocol.lua"] = true,
             ["lib/protocol.lua"] = true,
+            ["lib/message_protocol.lua"] = true,
+            ["lib/validate.lua"] = true,
+            ["lib/tokens.lua"] = true,
+            ["lib/ids.lua"] = true,
         },
     },
 }

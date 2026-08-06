@@ -4,6 +4,7 @@ local relay = require("lib.relay")
 local modem = require("lib.modem")
 local localGateway = require("lib.local_gateway")
 local settingsManager = require("lib.settings")
+local validate = require("lib.validate")
 
 local RELAY_HEALTH_INTERVAL = 30
 
@@ -30,9 +31,7 @@ local notice = nil
 local currentView = "status"
 local terminalWindow = nil
 
-local function trim(value)
-    return value:match("^%s*(.-)%s*$")
-end
+local trim = validate.trim
 
 
 local function readCommand()

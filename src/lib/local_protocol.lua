@@ -1,83 +1,18 @@
-local localProtocol = {}
+local publicProtocol = require("lib.protocol")
+local validate = require("lib.validate")
+local tokens = require("lib.tokens")
+local messageProtocol = require("lib.message_protocol")
 
-local publicProtocol =
-    require("lib.protocol")
-
-
-localProtocol.NAME = "craftnet-local"
-localProtocol.VERSION = 1
-
--- Used by rednet.send(), rednet.receive(),
--- and rednet.broadcast().
-localProtocol.REDNET_PROTOCOL =
-    "craftnet-local-v1"
-
-
-localProtocol.TYPES = {
-    hello = true,
-    welcome = true,
-    outbound = true,
-    deliver = true,
-
-    request = true,
-    response = true,
-    return_delivery = true,
-
-    error = true,
-    ping = true,
-    pong = true,
-}
-
-local messageCounter = 0
-
-
-local function createMessageId()
-    messageCounter = messageCounter + 1
-
-    return table.concat({
-        tostring(os.getComputerID()),
-        tostring(os.epoch("utc")),
-        tostring(messageCounter),
-    }, "-")
-end
-
-
-local function isNonEmptyString(value)
-    return type(value) == "string"
-        and value ~= ""
-end
-
-
-local function isValidComputerId(value)
-    return type(value) == "number"
-        and value == math.floor(value)
-        and value >= 0
-end
-
-
-local function isValidPort(value)
-    return type(value) == "number"
-        and value == math.floor(value)
-        and value >= 1
-        and value <= 65535
-end
-
-local function isValidReturnToken(value)
-    return type(value) == "string"
-        and #value >= 8
-        and #value <= 64
-        and value:match("^[%w_-]+$") ~= nil
-end
 
 local function validateHello(payload)
-    if not isValidComputerId(
+    if not validate.isValidComputerId(
         payload.computerId
     ) then
         return false,
             "hello.computerId must be a valid computer ID."
     end
 
-    if not isNonEmptyString(
+    if not validate.isNonEmptyString(
         payload.clientVersion
     ) then
         return false,
@@ -89,21 +24,21 @@ end
 
 
 local function validateWelcome(payload)
-    if not isNonEmptyString(
+    if not validate.isNonEmptyString(
         payload.replyTo
     ) then
         return false,
             "welcome.replyTo must be a message ID."
     end
 
-    if not isValidComputerId(
+    if not validate.isValidComputerId(
         payload.gatewayId
     ) then
         return false,
             "welcome.gatewayId must be a valid computer ID."
     end
 
-    if not isNonEmptyString(
+    if not validate.isNonEmptyString(
         payload.publicAddress
     ) then
         return false,
@@ -115,21 +50,21 @@ end
 
 
 local function validateOutbound(payload)
-    if not isNonEmptyString(
+    if not validate.isNonEmptyString(
         payload.destination
     ) then
         return false,
             "outbound.destination must be a string."
     end
 
-    if not isValidPort(
+    if not validate.isValidPort(
         payload.sourcePort
     ) then
         return false,
             "outbound.sourcePort must be from 1 to 65535."
     end
 
-    if not isValidPort(
+    if not validate.isValidPort(
         payload.destinationPort
     ) then
         return false,
@@ -146,7 +81,7 @@ end
 
 
 local function validateDeliver(payload)
-    if not isValidPort(
+    if not validate.isValidPort(
         payload.internalPort
     ) then
         return false,
@@ -181,21 +116,21 @@ end
 
 
 local function validateRequest(payload)
-    if not isNonEmptyString(
+    if not validate.isNonEmptyString(
         payload.destination
     ) then
         return false,
             "request.destination must be a string."
     end
 
-    if not isValidPort(
+    if not validate.isValidPort(
         payload.destinationPort
     ) then
         return false,
             "request.destinationPort must be from 1 to 65535."
     end
 
-    if not isValidReturnToken(
+    if not tokens.isValidReturnToken(
         payload.returnToken
     ) then
         return false,
@@ -212,21 +147,21 @@ end
 
 
 local function validateResponse(payload)
-    if not isNonEmptyString(
+    if not validate.isNonEmptyString(
         payload.destination
     ) then
         return false,
             "response.destination must be a string."
     end
 
-    if not isValidPort(
+    if not validate.isValidPort(
         payload.sourcePort
     ) then
         return false,
             "response.sourcePort must be from 1 to 65535."
     end
 
-    if not isValidReturnToken(
+    if not tokens.isValidReturnToken(
         payload.returnToken
     ) then
         return false,
@@ -268,21 +203,21 @@ local function validateReturnDelivery(payload)
 end
 
 local function validateError(payload)
-    if not isNonEmptyString(
+    if not validate.isNonEmptyString(
         payload.replyTo
     ) then
         return false,
             "error.replyTo must be a message ID."
     end
 
-    if not isNonEmptyString(
+    if not validate.isNonEmptyString(
         payload.code
     ) then
         return false,
             "error.code must be a string."
     end
 
-    if not isNonEmptyString(
+    if not validate.isNonEmptyString(
         payload.message
     ) then
         return false,
@@ -304,7 +239,7 @@ end
 
 
 local function validatePong(payload)
-    if not isNonEmptyString(
+    if not validate.isNonEmptyString(
         payload.replyTo
     ) then
         return false,
@@ -319,158 +254,55 @@ local function validatePong(payload)
     return true
 end
 
-local validators = {
-    hello = validateHello,
-    welcome = validateWelcome,
-    outbound = validateOutbound,
-    deliver = validateDeliver,
 
-    request = validateRequest,
-    response = validateResponse,
-    return_delivery =
-        validateReturnDelivery,
+local localProtocol = messageProtocol.new({
+    name = "craftnet-local",
+    version = 1,
+    description = "CraftNet local",
 
-    error = validateError,
-    ping = validatePing,
-    pong = validatePong,
-}
+    types = {
+        hello = true,
+        welcome = true,
+        outbound = true,
+        deliver = true,
 
-local function createMessage(
-    messageType,
-    payload
-)
-    return {
-        protocol = localProtocol.NAME,
-        version = localProtocol.VERSION,
-        type = messageType,
-        id = createMessageId(),
-        payload = payload,
-    }
-end
+        request = true,
+        response = true,
+        return_delivery = true,
 
+        error = true,
+        ping = true,
+        pong = true,
+    },
 
-function localProtocol.validate(message)
-    if type(message) ~= "table" then
-        return false,
-            "Message must be a table."
-    end
+    validators = {
+        hello = validateHello,
+        welcome = validateWelcome,
+        outbound = validateOutbound,
+        deliver = validateDeliver,
 
-    if message.protocol
-        ~= localProtocol.NAME
-    then
-        return false,
-            "Not a CraftNet local message."
-    end
+        request = validateRequest,
+        response = validateResponse,
+        return_delivery =
+            validateReturnDelivery,
 
-    if message.version
-        ~= localProtocol.VERSION
-    then
-        return false,
-            "Unsupported CraftNet local protocol version."
-    end
-
-    if not localProtocol.TYPES[
-        message.type
-    ] then
-        return false,
-            "Unknown local message type: "
-            .. tostring(message.type)
-    end
-
-    if not isNonEmptyString(
-        message.id
-    ) then
-        return false,
-            "Message ID is missing."
-    end
-
-    if type(message.payload)
-        ~= "table"
-    then
-        return false,
-            "Message payload must be a table."
-    end
-
-    local validator =
-        validators[message.type]
-
-    if not validator then
-        return false,
-            "No validator for local message type."
-    end
-
-    return validator(message.payload)
-end
+        error = validateError,
+        ping = validatePing,
+        pong = validatePong,
+    },
+})
 
 
-function localProtocol.encode(message)
-    local valid, validationError =
-        localProtocol.validate(message)
-
-    if not valid then
-        return nil, validationError
-    end
-
-    local success, encoded =
-        pcall(
-            textutils.serializeJSON,
-            message
-        )
-
-    if not success then
-        return nil,
-            "Could not encode local message: "
-            .. tostring(encoded)
-    end
-
-    return encoded
-end
-
-
-function localProtocol.decode(encoded)
-    if type(encoded) ~= "string" then
-        return nil,
-            "Encoded local message must be a string."
-    end
-
-    local success,
-        message,
-        decodeError =
-            pcall(
-                textutils.unserializeJSON,
-                encoded
-            )
-
-    if not success then
-        return nil,
-            "Could not decode local message: "
-            .. tostring(message)
-    end
-
-    if message == nil then
-        return nil,
-            "Invalid local JSON: "
-            .. tostring(
-                decodeError
-                    or "Unknown error"
-            )
-    end
-
-    local valid, validationError =
-        localProtocol.validate(message)
-
-    if not valid then
-        return nil, validationError
-    end
-
-    return message
-end
+-- Used by rednet.send(), rednet.receive(),
+-- and rednet.broadcast().
+localProtocol.REDNET_PROTOCOL =
+    "craftnet-local-v1"
 
 
 function localProtocol.newHello(
     clientVersion
 )
-    return createMessage(
+    return localProtocol.createMessage(
         "hello",
         {
             computerId =
@@ -487,7 +319,7 @@ function localProtocol.newWelcome(
     replyTo,
     publicAddress
 )
-    return createMessage(
+    return localProtocol.createMessage(
         "welcome",
         {
             replyTo = replyTo,
@@ -516,7 +348,7 @@ function localProtocol.newOutbound(
         tonumber(sourcePort)
         or destinationPort
 
-    return createMessage(
+    return localProtocol.createMessage(
         "outbound",
         {
             destination =
@@ -540,7 +372,7 @@ function localProtocol.newDeliver(
     internalPort,
     packet
 )
-    return createMessage(
+    return localProtocol.createMessage(
         "deliver",
         {
             internalPort =
@@ -557,7 +389,7 @@ function localProtocol.newRequest(
     returnToken,
     data
 )
-    return createMessage(
+    return localProtocol.createMessage(
         "request",
         {
             destination =
@@ -583,7 +415,7 @@ function localProtocol.newResponse(
     returnToken,
     data
 )
-    return createMessage(
+    return localProtocol.createMessage(
         "response",
         {
             destination =
@@ -606,7 +438,7 @@ end
 function localProtocol.newReturnDelivery(
     response
 )
-    return createMessage(
+    return localProtocol.createMessage(
         "return_delivery",
         {
             response = response,
@@ -619,7 +451,7 @@ function localProtocol.newError(
     code,
     message
 )
-    return createMessage(
+    return localProtocol.createMessage(
         "error",
         {
             replyTo = replyTo,
@@ -631,7 +463,7 @@ end
 
 
 function localProtocol.newPing()
-    return createMessage(
+    return localProtocol.createMessage(
         "ping",
         {
             sentAt =
@@ -644,7 +476,7 @@ end
 function localProtocol.newPong(
     replyTo
 )
-    return createMessage(
+    return localProtocol.createMessage(
         "pong",
         {
             replyTo = replyTo,

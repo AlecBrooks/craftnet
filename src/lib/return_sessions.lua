@@ -1,3 +1,6 @@
+local validate = require("lib.validate")
+local tokens = require("lib.tokens")
+
 local returnSessions = {}
 
 
@@ -11,50 +14,11 @@ local function now()
 end
 
 
-local function normalizeAddress(address)
-    if type(address) ~= "string" then
-        return nil
-    end
-
-    address =
-        string.lower(
-            address:match("^%s*(.-)%s*$")
-            or ""
-        )
-
-    if address == "" then
-        return nil
-    end
-
-    return address
-end
-
-local function isNonEmptyString(value)
-    return type(value) == "string"
-        and value ~= ""
-end
-
-local function isValidComputerId(value)
-    return type(value) == "number"
-        and value == math.floor(value)
-        and value >= 0
-end
-
-
-local function isValidPort(value)
-    return type(value) == "number"
-        and value == math.floor(value)
-        and value >= 1
-        and value <= 65535
-end
-
-
-local function isValidReturnToken(value)
-    return type(value) == "string"
-        and #value >= 8
-        and #value <= 64
-        and value:match("^[%w_-]+$") ~= nil
-end
+local normalizeAddress = validate.normalizeAddress
+local isNonEmptyString = validate.isNonEmptyString
+local isValidComputerId = validate.isValidComputerId
+local isValidPort = validate.isValidPort
+local isValidReturnToken = tokens.isValidReturnToken
 
 
 local function removeExpiredSession(
