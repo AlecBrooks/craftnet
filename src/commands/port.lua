@@ -32,23 +32,25 @@ local function requireModem()
 end
 
 
--- Parses a trailing, optional subdomain argument. Defaults
--- to the root/bare address when omitted.
-local function parseOptionalSubdomain(value)
-    if value == nil or value == "" then
-        return addresses.ROOT_SUBDOMAIN
-    end
-
-    return routes.parseSubdomain(value)
-end
-
-
 local function describeSubdomain(subdomain)
     if subdomain == addresses.ROOT_SUBDOMAIN then
         return ""
     end
 
+    if subdomain == addresses.WILDCARD_SUBDOMAIN then
+        return " for the cross-subdomain wildcard (@)"
+    end
+
     return " for subdomain '" .. subdomain .. "'"
+end
+
+
+local function subdomainLabel(subdomain)
+    if subdomain == addresses.ROOT_SUBDOMAIN then
+        return "root"
+    end
+
+    return subdomain
 end
 
 
@@ -155,7 +157,7 @@ function portCommand.run(
             )
 
         local internalPort =
-            routes.parsePort(
+            routes.parsePortKey(
                 arguments[4]
             )
 
@@ -165,7 +167,7 @@ function portCommand.run(
             )
 
         local subdomain =
-            parseOptionalSubdomain(
+            routes.parseSubdomain(
                 arguments[6]
             )
 
@@ -176,8 +178,9 @@ function portCommand.run(
             or not subdomain
         then
             return false,
-                "Usage: ports route <external|@> "
-                .. "to <internal> <ID> [subdomain]"
+                "Usage: ports route <external|*> "
+                .. "to <internal|*> <ID> "
+                .. "[subdomain|root|@]"
         end
 
         local previousRoute =
@@ -270,7 +273,7 @@ function portCommand.run(
 
             if not subdomain then
                 return false,
-                    "Usage: ports close all [subdomain]"
+                    "Usage: ports close all [subdomain|root|@]"
             end
 
             local hadRoutes =
@@ -308,13 +311,14 @@ function portCommand.run(
             )
 
         local subdomain =
-            parseOptionalSubdomain(
+            routes.parseSubdomain(
                 arguments[3]
             )
 
         if not portKey or not subdomain then
             return false,
-                "Usage: ports close <port|@|all> [subdomain]"
+                "Usage: ports close <port|*|all> "
+                .. "[subdomain|root|@]"
         end
 
         local removed =
@@ -360,7 +364,7 @@ function portCommand.run(
 
             if not subdomainFilter then
                 return false,
-                    "Usage: ports list [subdomain]"
+                    "Usage: ports list [subdomain|root|@]"
             end
         end
 
@@ -376,16 +380,10 @@ function portCommand.run(
                 or route.subdomain
                     == subdomainFilter
             then
-                local label =
-                    route.subdomain
-                        == addresses.ROOT_SUBDOMAIN
-                    and "(root)"
-                    or route.subdomain
-
                 routeStrings[
                     #routeStrings + 1
                 ] =
-                    label
+                    subdomainLabel(route.subdomain)
                     .. ": "
                     .. tostring(
                         route.externalPort
@@ -421,10 +419,10 @@ function portCommand.run(
 
     return false,
         "Usage: ports open <port> | "
-        .. "ports route <external|@> to <internal> "
-        .. "<ID> [subdomain] | "
-        .. "ports close <port|@|all> [subdomain] | "
-        .. "ports list [subdomain] | ports table"
+        .. "ports route <external|*> to <internal|*> "
+        .. "<ID> [subdomain|root|@] | "
+        .. "ports close <port|*|all> [subdomain|root|@] | "
+        .. "ports list [subdomain|root|@] | ports table"
 end
 
 

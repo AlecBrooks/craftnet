@@ -9,6 +9,9 @@ local routes =
 local localProtocol =
     require("lib.local_protocol")
 
+local addresses =
+    require("lib.addresses")
+
 
 function router.routeInbound(
     settings,
@@ -69,9 +72,18 @@ function router.routeInbound(
             "The gateway has no working modem."
     end
 
+    -- A "*" internal port means "pass the external port
+    -- through unchanged" -- resolved here to a real number;
+    -- the host never sees "*" itself.
+    local deliveredPort =
+        route.internalPort
+            == addresses.WILDCARD_PORT
+        and externalPort
+        or route.internalPort
+
     local delivery =
         localProtocol.newDeliver(
-            route.internalPort,
+            deliveredPort,
             packet
         )
 
@@ -98,7 +110,7 @@ function router.routeInbound(
         "craftnet_local_delivery",
         packet.id,
         route.computerId,
-        route.internalPort
+        deliveredPort
     )
 
     return true,

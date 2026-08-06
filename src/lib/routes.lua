@@ -17,18 +17,18 @@ function routes.parseComputerId(value)
 end
 
 
+-- Omitted/empty -> root, "root" -> root, "@" -> the
+-- cross-subdomain wildcard, anything else -> a real subdomain
+-- name (or nil if invalid).
 function routes.parseSubdomain(value)
-    if value == addresses.ROOT_SUBDOMAIN then
-        return addresses.ROOT_SUBDOMAIN
-    end
-
-    return addresses.normalizeSubdomain(value)
+    return addresses.parseSubdomainToken(value)
 end
 
 
 -- Parses a routing table's "port" column: either a literal
--- external port number, or the wildcard "@" that catches any
--- port not otherwise explicitly routed for the same subdomain.
+-- port number, or the wildcard "*" that catches any port not
+-- otherwise explicitly routed within the same subdomain (or
+-- within the cross-subdomain wildcard bucket).
 function routes.parsePortKey(value)
     if value == addresses.WILDCARD_PORT then
         return addresses.WILDCARD_PORT
@@ -48,16 +48,20 @@ end
 --
 -- {
 --     [subdomain] = {
---         [portKey] = { internalPort = N, computerId = ID },
+--         [portKey] = { internalPort = N | "*", computerId = ID },
 --         ...
 --     },
 --     ...
 -- }
 --
--- subdomain is "" for the gateway's own root/bare address.
--- portKey is either a stringified port number or "@". Entries
--- that don't parse cleanly are dropped rather than erroring,
--- since this runs on every settings load.
+-- subdomain is "" for the gateway's own root/bare address, or
+-- "@" for the cross-subdomain wildcard bucket. portKey is
+-- either a stringified port number or "*". internalPort is
+-- either a real port number, or "*" meaning "pass the
+-- original external port through unchanged" -- resolved to a
+-- real number at delivery time, never sent over the wire as
+-- "*". Entries that don't parse cleanly are dropped rather
+-- than erroring, since this runs on every settings load.
 function routes.normalize(openPorts)
     local normalized = {}
     local localComputerId = os.getComputerID()
@@ -76,12 +80,22 @@ function routes.normalize(openPorts)
                     routes.parsePortKey(portKeyRaw)
 
                 if portKey and type(value) == "table" then
-                    local internalPort =
-                        parsePort(value.internalPort)
-                        or (
-                            portKey ~= addresses.WILDCARD_PORT
-                            and tonumber(portKey)
-                        )
+                    local internalPort
+
+                    if value.internalPort
+                        == addresses.WILDCARD_PORT
+                    then
+                        internalPort =
+                            addresses.WILDCARD_PORT
+                    else
+                        internalPort =
+                            parsePort(value.internalPort)
+                            or (
+                                portKey
+                                    ~= addresses.WILDCARD_PORT
+                                and tonumber(portKey)
+                            )
+                    end
 
                     local computerId =
                         parseComputerId(value.computerId)
@@ -105,10 +119,27 @@ function routes.normalize(openPorts)
 end
 
 
--- Looks up the route for (subdomain, externalPort), falling
--- back to that subdomain's own "@" wildcard route if no exact
--- port match exists. Different subdomains never share routes,
--- even for the same port number.
+local function lookupInSubdomain(subdomainRoutes, portKey)
+    if not subdomainRoutes then
+        return nil
+    end
+
+    return subdomainRoutes[portKey]
+        or subdomainRoutes[addresses.WILDCARD_PORT]
+end
+
+
+-- Looks up the route for (subdomain, externalPort):
+--
+-- 1. An exact port match within that subdomain's own rules.
+-- 2. That subdomain's own "*" wildcard route.
+-- 3. For a named subdomain only (never root, never the
+--    wildcard bucket itself): the cross-subdomain wildcard's
+--    exact port match, then its own "*" fallback.
+--
+-- Different subdomains never share routes, even for the same
+-- port number -- the cross-subdomain wildcard only ever fires
+-- for a subdomain that has no rules of its own.
 function routes.get(openPorts, subdomain, externalPort)
     subdomain = routes.parseSubdomain(subdomain)
 
@@ -121,15 +152,28 @@ function routes.get(openPorts, subdomain, externalPort)
         return nil
     end
 
-    local subdomainRoutes =
-        routes.normalize(openPorts)[subdomain]
+    local normalized = routes.normalize(openPorts)
 
-    if not subdomainRoutes then
+    local ownMatch =
+        lookupInSubdomain(
+            normalized[subdomain],
+            portKey
+        )
+
+    if ownMatch then
+        return ownMatch
+    end
+
+    if subdomain == addresses.ROOT_SUBDOMAIN
+        or subdomain == addresses.WILDCARD_SUBDOMAIN
+    then
         return nil
     end
 
-    return subdomainRoutes[portKey]
-        or subdomainRoutes[addresses.WILDCARD_PORT]
+    return lookupInSubdomain(
+        normalized[addresses.WILDCARD_SUBDOMAIN],
+        portKey
+    )
 end
 
 
@@ -179,9 +223,10 @@ function routes.removeAllForSubdomain(openPorts, subdomain)
 end
 
 
--- Flat, sorted list for display: grouped by subdomain, then
--- by port ascending, with each subdomain's "@" wildcard (if
--- any) sorted last within that group.
+-- Flat, sorted list for display: root first, then the
+-- cross-subdomain wildcard, then named subdomains
+-- alphabetically -- each group's own "*" wildcard sorted last
+-- within that group.
 function routes.list(openPorts)
     local normalized = routes.normalize(openPorts)
     local routeList = {}

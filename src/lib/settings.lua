@@ -3,6 +3,9 @@ local settingsManager = {}
 local routes =
     require("lib.routes")
 
+local addresses =
+    require("lib.addresses")
+
 local directory =
     "/craftnet-data"
 
@@ -70,7 +73,26 @@ local function getDefaults()
         gatewayKey =
             generateGatewayKey(),
 
-        openPorts = {},
+        -- A fresh gateway starts with one pre-seeded route: any
+        -- port hitting the root address passes through to the
+        -- gateway itself. It doesn't serve anything yet --
+        -- routing to the gateway's own ID always reports
+        -- SERVICE_UNAVAILABLE until gateway-hosted services
+        -- exist -- but it means root traffic gets a real
+        -- "not ready" response instead of "closed", and it'll
+        -- start working automatically the day that feature
+        -- ships, no operator action required.
+        openPorts = {
+            [addresses.ROOT_SUBDOMAIN] = {
+                [addresses.WILDCARD_PORT] = {
+                    internalPort =
+                        addresses.WILDCARD_PORT,
+
+                    computerId =
+                        os.getComputerID(),
+                },
+            },
+        },
 
         -- Persisted subdomain claims, keyed by computer ID
         -- (as a string), so a reconnecting host automatically

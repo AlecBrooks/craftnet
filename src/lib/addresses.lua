@@ -4,8 +4,9 @@ local addresses = {}
 
 
 -- Marks a route as a fallback that matches any port not
--- otherwise explicitly claimed within the same subdomain.
-addresses.WILDCARD_PORT = "@"
+-- otherwise explicitly claimed within the same subdomain
+-- (or within the cross-subdomain wildcard bucket).
+addresses.WILDCARD_PORT = "*"
 
 -- The root/bare address (no subdomain) is represented
 -- internally as the empty string, so it's just one more
@@ -13,13 +14,31 @@ addresses.WILDCARD_PORT = "@"
 -- a separate mechanism.
 addresses.ROOT_SUBDOMAIN = ""
 
+-- Marks a route as a fallback that matches any subdomain --
+-- including ones nobody ever connected as -- that has no
+-- rules of its own. Never matches root traffic; root only
+-- ever falls back to its own rules, never to this bucket.
+addresses.WILDCARD_SUBDOMAIN = "@"
+
+-- Subdomain names a real host may never claim, since they'd
+-- collide with routing-table keyword syntax.
+local RESERVED_SUBDOMAINS = {
+    root = true,
+}
+
 
 -- DNS-label-shaped: lowercase letters, digits, and hyphens,
 -- 1 to 32 characters, must start and end with a letter or
 -- digit. Deliberately excludes "." so a subdomain is always
 -- a single label and address decomposition stays unambiguous.
+-- "@" is already excluded by the character class; "root" is
+-- explicitly reserved below.
 function addresses.isValidSubdomain(value)
     if type(value) ~= "string" then
+        return false
+    end
+
+    if RESERVED_SUBDOMAINS[value] then
         return false
     end
 
@@ -48,6 +67,33 @@ function addresses.normalizeSubdomain(value)
     end
 
     return trimmed
+end
+
+
+-- Parses a routing-table subdomain slot: omitted/empty
+-- defaults to root, the keyword "root" is an explicit way to
+-- write the same thing, "@" is the cross-subdomain wildcard,
+-- and anything else must be a real, non-reserved subdomain
+-- name. Returns nil for anything invalid.
+function addresses.parseSubdomainToken(value)
+    if value == nil or value == "" then
+        return addresses.ROOT_SUBDOMAIN
+    end
+
+    local normalized =
+        string.lower(
+            validate.trim(value)
+        )
+
+    if normalized == "root" then
+        return addresses.ROOT_SUBDOMAIN
+    end
+
+    if normalized == addresses.WILDCARD_SUBDOMAIN then
+        return addresses.WILDCARD_SUBDOMAIN
+    end
+
+    return addresses.normalizeSubdomain(normalized)
 end
 
 
@@ -83,7 +129,9 @@ end
 -- under the given domain. Returns nil if the address isn't
 -- the domain itself or a single-label subdomain of it (i.e.
 -- it belongs to some other gateway, or isn't a CraftNet
--- address at all).
+-- address at all). Never returns the wildcard subdomain --
+-- that's a routing-table configuration concept only, real
+-- wire addresses can't be addressed to it directly.
 function addresses.decompose(fullAddress, domain)
     local normalizedAddress =
         validate.normalizeAddress(fullAddress)

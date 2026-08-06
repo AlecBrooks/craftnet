@@ -109,26 +109,15 @@ If a key isn't given on the command line, CraftNet prompts for it without echoin
 
 CraftNet ports are virtual application ports carried inside the CraftNet protocol — not Minecraft server ports, router ports, or physical TCP ports. A single WebSocket connection can carry traffic for many CraftNet ports at once, so nothing needs to be forwarded at the router level.
 
-Every route belongs to a subdomain — the bare gateway address (`craftnet.craft`) is just the "root" entry in that same table, not a separate mechanism. See [Subdomains](#subdomains) below for how routes in different subdomains never conflict, even on the same port number.
-
 ```text
-ports open <port>                                    Open a port at the root address,
-                                                      routed to this gateway
-ports route <ext|@> to <int> <computerId> [subdomain] Route a port (or "@" for any port
-                                                       not otherwise claimed) to a specific
-                                                       host's internal port. Omit the
-                                                       subdomain to route the root address.
-ports close <port|@|all> [subdomain]                 Close one route, or every route for
-                                                       a subdomain, or (bare "all") every
-                                                       route on the whole gateway
-ports list [subdomain]                               List routes as text, optionally
-                                                       filtered to one subdomain
-ports table                                          Show the routing table in the dashboard
+ports open <port>
+ports route <external|*> to <internal|*> <computerId> [subdomain|root|@]
+ports close <port|*|all> [subdomain|root|@]
+ports list [subdomain|root|@]
+ports table
 ```
 
-`port`/`port open ...` also works as a singular alias for `ports`/`ports open ...`. Valid port numbers are `1`–`65535`.
-
-`ports open <port>` is a shorthand that always targets the root address and this gateway itself (no local service currently binds gateway-hosted ports — that path is reserved for future use). `ports route` is the general mechanism: it can target the root address (by omitting `[subdomain]`) or any specific Host subdomain, and it accepts `@` in place of a port number to mean "any port not otherwise explicitly routed within this same subdomain."
+`port`/`port open ...` also works as a singular alias for `ports`/`ports open ...`. This got substantial enough to warrant its own section — see [Port Routing Reference](#port-routing-reference) below for the full syntax, precedence rules, and worked examples.
 
 ### System commands
 
@@ -206,20 +195,128 @@ Expected result after `cnet connect`: `Connected to gateway ID <id> as mythra.<g
 
 ## Subdomains
 
-A Host's subdomain is its identity on a Gateway — closer to a hostname than to a routing detail. It's chosen once at `cnet connect`, is required (there's no "default"/anonymous Host identity), and is saved by the Gateway keyed to the Host's computer ID, so reconnecting after a reboot or a modem drop reclaims the same name automatically rather than racing another Host for it.
+A Host's subdomain is its identity on a Gateway — closer to a hostname than to a routing detail. It's chosen once at `cnet connect`, is required (there's no "default"/anonymous Host identity), and is saved by the Gateway keyed to the Host's computer ID, so reconnecting after a reboot or a modem drop reclaims the same name automatically rather than racing another Host for it. `root` and `@` can never be claimed as a subdomain — they're routing-table keywords, covered below, not addresses a Host can be.
 
 A Host's full external address is `<subdomain>.<gateway's address>` — e.g. a Host connecting as `mythra` to a gateway that's registered `craftnet.craft` is reachable at `mythra.craftnet.craft`. If the gateway hasn't registered a domain yet, the Host is just reachable as `mythra` directly; once a domain is registered later, new connections pick up the full address automatically (existing sessions need to reconnect to get the update).
 
-**Routing is fully independent per subdomain.** The routing table is really keyed by `(subdomain, port)`, not by port alone — the root address (`craftnet.craft`, no subdomain) is simply the entry where subdomain is empty, not a separate mechanism. This is what lets many Hosts each run a service on the same port number, the way many real machines can each listen on their own port 80:
+Addressing works without any change to the public relay protocol: `destination` fields already carry a full free-form address string today, so `mythra.craftnet.craft` travels exactly like `craftnet.craft` always has. The receiving Gateway decomposes it locally by stripping its own registered domain as a suffix (`lib/addresses.lua`) to recover the subdomain, then does the routing table lookup described below — the relay only needs to keep routing by domain ownership to the right Gateway connection, same as it already does for a bare domain.
+
+## Port Routing Reference
+
+This is the full syntax and behavior of the gateway's port routing table — the mechanism that decides, for any inbound CraftNet packet, which local computer receives it and on which internal port. It grew into its own feature, so it gets its own section.
+
+### The three destination scopes
+
+Every route belongs to exactly one of three scopes, written as the trailing `[subdomain|root|@]` argument on `ports route`/`close`/`list`:
+
+| Scope | How to write it | Matches |
+|---|---|---|
+| **Root** | omit the argument, or write `root` explicitly | Traffic addressed to the bare gateway address itself (e.g. `craftnet.craft`) — no subdomain |
+| **A named subdomain** | the subdomain's name, e.g. `mythra` | Traffic addressed to `mythra.craftnet.craft` specifically |
+| **Cross-subdomain wildcard** | `@` | A fallback for *any* subdomain — including ones nobody has ever connected as — that has no rules of its own |
+
+These are independent tables, not a fallback chain into each other — with exactly one exception, in the precedence rules below: a named subdomain with no rules of its own falls back to `@`. Root never falls back to `@`, and `@` never falls back to anything.
+
+### Port matching
+
+The external port column accepts a literal port number (`1`–`65535`) or `*`, meaning "any port not otherwise explicitly routed within this same scope."
+
+### Internal port: fixed translation, or passthrough
+
+The internal port column also accepts a literal number or `*`:
+
+- **A number** (e.g. `12`) always delivers to that exact internal port, regardless of which external port was actually hit. Use this to translate a public-facing port to a different internal one, or to point several external ports at one fixed listener.
+- **`*` (passthrough)** delivers to whichever external port the packet actually arrived on. Useful for a host running several services on their natural/conventional ports without needing a route registered for each one — the host's own `cnet listen <port>` calls become the real access-control layer at that point, not the gateway's routing table.
+
+### Precedence
+
+For a packet addressed to a given scope and port, the gateway checks, in order:
+
+1. An exact port match within that scope's own rules.
+2. That scope's own `*` route.
+3. *(named subdomains only)* the cross-subdomain wildcard's exact port match.
+4. *(named subdomains only)* the cross-subdomain wildcard's own `*` route.
+
+Root and `@` itself stop at step 2 — they never fall through to `@`.
+
+### Reserved words
+
+`root` and `@` can never be claimed as a Host's own subdomain identity — `cnet connect` rejects them, same as any other invalid name. They only mean something as routing-table keywords.
+
+### Default install route
+
+A fresh gateway starts with one pre-seeded route: `root:* --> * --> <the gateway's own computer ID>`. It doesn't serve anything yet — routing to the gateway itself always reports `SERVICE_UNAVAILABLE` until gateway-hosted services exist (see the roadmap) — but root traffic gets a real "not ready" response instead of "closed" from the moment the gateway exists, and it'll start working automatically the day that feature ships, no operator action required.
+
+### Command reference
 
 ```text
-ports route 80 to 80 5              (routes root:80 to computer 5)
-ports route @ to 80 7 mythra        (routes mythra:* to computer 7's internal 80)
+ports open <port>
+    Shorthand: opens <port> at the root address, routed to this gateway
+    itself (fixed 1:1, no subdomain, no passthrough). Use `ports route`
+    for anything more specific.
+
+ports route <external|*> to <internal|*> <computerId> [subdomain|root|@]
+    The general mechanism. Creates or replaces one route.
+      external    a port number, or `*` for "any port not otherwise
+                   routed within this scope"
+      internal    a port number, or `*` for "pass the external port
+                   through unchanged"
+      computerId  the destination computer's ID
+      scope       a subdomain name, `root`, or `@` -- omitted defaults
+                   to root
+
+ports close <port|*|all> [subdomain|root|@]
+    Removes one route. `ports close all` with no scope clears the
+    ENTIRE routing table, gateway-wide. `ports close all <scope>`
+    clears only that scope's routes.
+
+ports list [subdomain|root|@]
+    Lists routes as text, optionally filtered to one scope.
+
+ports table
+    Shows the routing table in the dashboard, one row per route,
+    labeled `root`, `@`, or the subdomain name.
 ```
 
-With those two rules: a packet sent to `craftnet.craft:80` goes to computer 5. A packet sent to `mythra.craftnet.craft:80` goes to computer 7 — computer 5's claim on port 80 has no effect on `mythra`'s table at all, because they're different subdomains. `mythra.craftnet.craft` on *any* other port also reaches computer 7, via the `@` wildcard, since nothing more specific is routed for `mythra`. An explicit port rule for a given subdomain always takes priority over that same subdomain's own `@` rule; it has no effect on any other subdomain's rules.
+### Worked examples
 
-Addressing works without any change to the public relay protocol: `destination` fields already carry a full free-form address string today, so `mythra.craftnet.craft` travels exactly like `craftnet.craft` always has. The receiving Gateway decomposes it locally by stripping its own registered domain as a suffix (`lib/addresses.lua`) to recover the subdomain, then does the composite `(subdomain, port)` lookup — the relay only needs to keep routing by domain ownership to the right Gateway connection, same as it already does for a bare domain.
+**Everything to one host, no exceptions:**
+
+```text
+ports route * to * 7 mythra
+```
+
+Any port sent to `mythra.craftnet.craft` reaches computer 7, on the same port it was sent to.
+
+**One explicit service plus a catch-all, same subdomain:**
+
+```text
+ports route 80 to 8080 3 bob
+ports route * to * 3 bob
+```
+
+`bob.craftnet.craft:80` is translated to internal port 8080. Anything else addressed to `bob.craftnet.craft` passes through on its original port. Both reach computer 3.
+
+**Two different hosts, both serving port 80, zero conflict:**
+
+```text
+ports route 80 to 80 5
+ports route 80 to 80 3 bob
+```
+
+`craftnet.craft:80` (root) reaches computer 5. `bob.craftnet.craft:80` reaches computer 3. These never interact — different scopes, even though it's the same port number in both.
+
+**One host handles anyone who never set up their own routes:**
+
+```text
+ports route * to * 1 @
+```
+
+Any subdomain nobody's configured — connected as a Host or not — falls through to computer 1, on whatever port was originally used. A subdomain *with* its own rules (like `bob` above) never reaches this fallback; only the ones with nothing of their own do.
+
+**Root does not inherit from `@`:**
+
+The rule above, on its own, does nothing for `craftnet.craft` itself — root only ever consults its own rules (including its default pre-seeded `root:* --> * --> <gatewayId>` route). To also have computer 1 handle literal root traffic, that needs its own explicit line: `ports route * to * 1 root`.
 
 ## CraftNet Protocol
 
@@ -314,11 +411,13 @@ No router port forwarding is required, because the gateway always initiates the 
 Gateway settings live at `/craftnet-data/settings.lua`:
 
 ```text
-Gateway enabled state       Relay URL              Open ports (routing table,
-Gateway status               Relay status            keyed by subdomain and port)
+Gateway enabled state       Relay URL              Open ports (routing table --
+Gateway status               Relay status            see Port Routing Reference)
 Public address                Domain management keys  Registered domain
 Gateway authentication key    Host subdomain claims (keyed by computer ID)
 ```
+
+A fresh gateway's `openPorts` isn't actually empty — it starts with the pre-seeded default root route described in [Port Routing Reference](#port-routing-reference).
 
 Host settings live separately at `/craftnet-data/host.lua`:
 
@@ -365,7 +464,7 @@ craftnet/
     │   ├── validate.lua          Shared field validators (ports, IDs, addresses)
     │   ├── tokens.lua            Return-token generation and validation
     │   ├── ids.lua               Shared message/request ID generator
-    │   └── addresses.lua         Subdomain validation and address compose/decompose
+    │   └── addresses.lua         Subdomain/keyword parsing, address compose/decompose
     └── assets/
         └── logo.nfp
 ```
@@ -415,7 +514,10 @@ craftnet/
 - [x] Route a public port to a specific host's internal port
 - [x] Host-side daemon, shell integration, and developer API (`cnet`)
 - [x] Required per-host subdomain identity, persisted across reconnects
-- [x] Per-subdomain independent routing table with `@` wildcard fallback
+- [x] Independent routing table per scope (root / named subdomain / `@`)
+- [x] Cross-subdomain wildcard fallback (`@`) for unconfigured subdomains
+- [x] Port passthrough (`*` internal port) alongside fixed translation
+- [x] Pre-seeded default root route on fresh installs
 - [ ] Allow a service running on the gateway itself to bind a CraftNet port
 
 ## Version
