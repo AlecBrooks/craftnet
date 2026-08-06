@@ -509,8 +509,8 @@ craftnet/
 - [x] Enforce destination ports against the routing table
 - [x] Return protocol errors for rejected traffic
 - [x] Automatic reconnect and heartbeat for Host ↔ Gateway (Rednet)
+- [x] Route packets between two separate gateways through a real relay server
 - [ ] Automatic reconnect for Gateway ↔ relay (WebSocket) — currently manual via `relay connect`
-- [ ] Route packets between two separate gateways through a real relay server
 
 ### Local networking
 
