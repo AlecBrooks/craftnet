@@ -8,6 +8,7 @@ local message
 
 local config = require("config")
 local routes = require("lib.routes")
+local addresses = require("lib.addresses")
 
 function ui.getConfig()
     message = "CraftNet Gateway " .. config.version
@@ -321,8 +322,10 @@ local function drawPortsTable(
     local externalX =
         frameX1 + 2
 
+    -- Wide enough for "subdomain:port" labels, not just
+    -- a bare port number.
     local firstArrowX =
-        externalX + 9
+        externalX + 14
 
     local internalX =
         firstArrowX + 4
@@ -393,15 +396,27 @@ local function drawPortsTable(
             colors.white
         )
 
+        local externalLabel =
+            route.subdomain
+                == addresses.ROOT_SUBDOMAIN
+            and tostring(route.externalPort)
+            or (
+                route.subdomain
+                .. ":"
+                .. tostring(route.externalPort)
+            )
+
+        if #externalLabel > 12 then
+            externalLabel =
+                externalLabel:sub(1, 9)
+                .. "..."
+        end
+
         term.setCursorPos(
             externalX + 2,
             rowY
         )
-        term.write(
-            tostring(
-                route.externalPort
-            )
-        )
+        term.write(externalLabel)
 
         term.setCursorPos(
             firstArrowX,

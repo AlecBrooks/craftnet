@@ -2,6 +2,7 @@ local portCommand = {}
 
 local modem = require("lib.modem")
 local routes = require("lib.routes")
+local addresses = require("lib.addresses")
 
 
 local function saveSettings(
@@ -28,6 +29,26 @@ local function requireModem()
     end
 
     return true
+end
+
+
+-- Parses a trailing, optional subdomain argument. Defaults
+-- to the root/bare address when omitted.
+local function parseOptionalSubdomain(value)
+    if value == nil or value == "" then
+        return addresses.ROOT_SUBDOMAIN
+    end
+
+    return routes.parseSubdomain(value)
+end
+
+
+local function describeSubdomain(subdomain)
+    if subdomain == addresses.ROOT_SUBDOMAIN then
+        return ""
+    end
+
+    return " for subdomain '" .. subdomain .. "'"
 end
 
 
@@ -68,23 +89,26 @@ function portCommand.run(
         local key =
             tostring(externalPort)
 
-        if settings.openPorts[key] then
+        if settings.openPorts[
+            addresses.ROOT_SUBDOMAIN
+        ]
+            and settings.openPorts[
+                addresses.ROOT_SUBDOMAIN
+            ][key]
+        then
             return false,
                 "Port "
                 .. tostring(externalPort)
                 .. " is already open."
         end
 
-        local route = {
-            internalPort =
-                externalPort,
-
-            computerId =
-                os.getComputerID(),
-        }
-
-        settings.openPorts[key] =
-            route
+        routes.setRoute(
+            settings.openPorts,
+            addresses.ROOT_SUBDOMAIN,
+            key,
+            externalPort,
+            os.getComputerID()
+        )
 
         local success, saveError =
             saveSettings(
@@ -93,8 +117,11 @@ function portCommand.run(
             )
 
         if not success then
-            settings.openPorts[key] =
-                nil
+            routes.removeRoute(
+                settings.openPorts,
+                addresses.ROOT_SUBDOMAIN,
+                key
+            )
 
             return false, saveError
         end
@@ -103,9 +130,9 @@ function portCommand.run(
             "Opened port "
             .. tostring(externalPort)
             .. " -> "
-            .. tostring(route.internalPort)
+            .. tostring(externalPort)
             .. " on ID "
-            .. tostring(route.computerId)
+            .. tostring(os.getComputerID())
             .. "."
 
     elseif action == "route" then
@@ -117,8 +144,8 @@ function portCommand.run(
             return false, modemError
         end
 
-        local externalPort =
-            routes.parsePort(
+        local portKey =
+            routes.parsePortKey(
                 arguments[2]
             )
 
@@ -137,28 +164,35 @@ function portCommand.run(
                 arguments[5]
             )
 
-        if not externalPort
+        local subdomain =
+            parseOptionalSubdomain(
+                arguments[6]
+            )
+
+        if not portKey
             or separator ~= "to"
             or not internalPort
             or computerId == nil
+            or not subdomain
         then
             return false,
-                "Usage: ports route <external> to <internal> <ID>"
+                "Usage: ports route <external|@> "
+                .. "to <internal> <ID> [subdomain]"
         end
 
-        local key =
-            tostring(externalPort)
-
         local previousRoute =
-            settings.openPorts[key]
+            settings.openPorts[subdomain]
+            and settings.openPorts[subdomain][
+                portKey
+            ]
 
-        settings.openPorts[key] = {
-            internalPort =
-                internalPort,
-
-            computerId =
-                computerId,
-        }
+        routes.setRoute(
+            settings.openPorts,
+            subdomain,
+            portKey,
+            internalPort,
+            computerId
+        )
 
         local success, saveError =
             saveSettings(
@@ -167,19 +201,33 @@ function portCommand.run(
             )
 
         if not success then
-            settings.openPorts[key] =
-                previousRoute
+            if previousRoute then
+                routes.setRoute(
+                    settings.openPorts,
+                    subdomain,
+                    portKey,
+                    previousRoute.internalPort,
+                    previousRoute.computerId
+                )
+            else
+                routes.removeRoute(
+                    settings.openPorts,
+                    subdomain,
+                    portKey
+                )
+            end
 
             return false, saveError
         end
 
         return true,
             "Routed port "
-            .. tostring(externalPort)
+            .. tostring(portKey)
             .. " -> "
             .. tostring(internalPort)
             .. " on ID "
             .. tostring(computerId)
+            .. describeSubdomain(subdomain)
             .. "."
 
     elseif action == "close" then
@@ -189,10 +237,54 @@ function portCommand.run(
             )
 
         if target == "all" then
-            local previousPorts =
-                settings.openPorts
+            local subdomainArgument =
+                arguments[3]
 
-            settings.openPorts = {}
+            if subdomainArgument == nil then
+                local previousPorts =
+                    settings.openPorts
+
+                settings.openPorts = {}
+
+                local success, saveError =
+                    saveSettings(
+                        settings,
+                        settingsManager
+                    )
+
+                if not success then
+                    settings.openPorts =
+                        previousPorts
+
+                    return false, saveError
+                end
+
+                return true,
+                    "Closed all ports."
+            end
+
+            local subdomain =
+                routes.parseSubdomain(
+                    subdomainArgument
+                )
+
+            if not subdomain then
+                return false,
+                    "Usage: ports close all [subdomain]"
+            end
+
+            local hadRoutes =
+                routes.removeAllForSubdomain(
+                    settings.openPorts,
+                    subdomain
+                )
+
+            if not hadRoutes then
+                return false,
+                    "No ports are open"
+                    .. describeSubdomain(subdomain)
+                    .. "."
+            end
 
             local success, saveError =
                 saveSettings(
@@ -201,41 +293,45 @@ function portCommand.run(
                 )
 
             if not success then
-                settings.openPorts =
-                    previousPorts
-
                 return false, saveError
             end
 
             return true,
-                "Closed all ports."
+                "Closed all ports"
+                .. describeSubdomain(subdomain)
+                .. "."
         end
 
-        local externalPort =
-            routes.parsePort(
+        local portKey =
+            routes.parsePortKey(
                 arguments[2]
             )
 
-        if not externalPort then
+        local subdomain =
+            parseOptionalSubdomain(
+                arguments[3]
+            )
+
+        if not portKey or not subdomain then
             return false,
-                "Usage: ports close <number|all>"
+                "Usage: ports close <port|@|all> [subdomain]"
         end
 
-        local key =
-            tostring(externalPort)
+        local removed =
+            routes.removeRoute(
+                settings.openPorts,
+                subdomain,
+                portKey
+            )
 
-        if not settings.openPorts[key] then
+        if not removed then
             return false,
                 "Port "
-                .. tostring(externalPort)
-                .. " is not open."
+                .. tostring(portKey)
+                .. " is not open"
+                .. describeSubdomain(subdomain)
+                .. "."
         end
-
-        local previousRoute =
-            settings.openPorts[key]
-
-        settings.openPorts[key] =
-            nil
 
         local success, saveError =
             saveSettings(
@@ -244,60 +340,91 @@ function portCommand.run(
             )
 
         if not success then
-            settings.openPorts[key] =
-                previousRoute
-
             return false, saveError
         end
 
         return true,
             "Closed port "
-            .. tostring(externalPort)
+            .. tostring(portKey)
+            .. describeSubdomain(subdomain)
             .. "."
 
     elseif action == "list" then
+        local subdomainFilter = nil
+
+        if arguments[2] ~= nil then
+            subdomainFilter =
+                routes.parseSubdomain(
+                    arguments[2]
+                )
+
+            if not subdomainFilter then
+                return false,
+                    "Usage: ports list [subdomain]"
+            end
+        end
+
         local routeList =
             routes.list(
                 settings.openPorts
             )
 
-        if #routeList == 0 then
-            return true,
-                "No ports are open."
-        end
-
         local routeStrings = {}
 
-        for index, route
-            in ipairs(routeList)
-        do
-            routeStrings[index] =
-                tostring(
-                    route.externalPort
+        for _, route in ipairs(routeList) do
+            if not subdomainFilter
+                or route.subdomain
+                    == subdomainFilter
+            then
+                local label =
+                    route.subdomain
+                        == addresses.ROOT_SUBDOMAIN
+                    and "(root)"
+                    or route.subdomain
+
+                routeStrings[
+                    #routeStrings + 1
+                ] =
+                    label
+                    .. ": "
+                    .. tostring(
+                        route.externalPort
+                    )
+                    .. " -> "
+                    .. tostring(
+                        route.internalPort
+                    )
+                    .. " @ ID "
+                    .. tostring(
+                        route.computerId
+                    )
+            end
+        end
+
+        if #routeStrings == 0 then
+            return true,
+                "No ports are open"
+                .. describeSubdomain(
+                    subdomainFilter
+                    or addresses.ROOT_SUBDOMAIN
                 )
-                .. " -> "
-                .. tostring(
-                    route.internalPort
-                )
-                .. " @ ID "
-                .. tostring(
-                    route.computerId
-                )
+                .. "."
         end
 
         return true,
             "Routes: "
-            .. table.concat(
-                routeStrings,
-                ", "
-            )
+            .. table.concat(routeStrings, ", ")
 
     elseif action == "table" then
         return true, "", "ports"
     end
 
     return false,
-        "Usage: ports open <port> | ports route <external> to <internal> <ID> | ports close <port|all> | ports list | ports table"
+        "Usage: ports open <port> | "
+        .. "ports route <external|@> to <internal> "
+        .. "<ID> [subdomain] | "
+        .. "ports close <port|@|all> [subdomain] | "
+        .. "ports list [subdomain] | ports table"
 end
 
 

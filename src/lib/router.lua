@@ -12,6 +12,7 @@ local localProtocol =
 
 function router.routeInbound(
     settings,
+    subdomain,
     packet
 )
     if type(packet) ~= "table"
@@ -33,6 +34,7 @@ function router.routeInbound(
     local route =
         routes.get(
             settings.openPorts,
+            subdomain,
             externalPort
         )
 
@@ -43,7 +45,8 @@ function router.routeInbound(
             .. tostring(externalPort)
             .. " is closed on "
             .. tostring(
-                settings.publicAddress
+                payload.destination
+                or settings.publicAddress
                 or "this gateway"
             )
             .. "."

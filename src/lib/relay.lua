@@ -15,6 +15,12 @@ local modem =
 local returnSessions =
     require("lib.return_sessions")
 
+local routes =
+    require("lib.routes")
+
+local addresses =
+    require("lib.addresses")
+
 local config =
     require("config")
 
@@ -143,25 +149,8 @@ local function waitForDomainResult(
     end
 end
 
-local function isPortOpen(settings, port)
-    if type(settings.openPorts) ~= "table" then
-        return false
-    end
-
-    local entry =
-        settings.openPorts[tostring(port)]
-
-    -- Supports both:
-    --
-    -- ["12"] = true
-    --
-    -- and the future route format:
-    --
-    -- ["12"] = {
-    --     internalPort = 12,
-    --     computerId = 0,
-    -- }
-    return entry ~= nil and entry ~= false
+local function isPortOpen(settings, subdomain, port)
+    return routes.get(settings.openPorts, subdomain, port) ~= nil
 end
 
 
@@ -228,23 +217,13 @@ local function routeReturnResponse(
     local payload =
         message.payload or {}
 
-    local destination =
-        string.lower(
-            tostring(
-                payload.destination
-                or ""
-            )
-        )
+    local belongsToGateway =
+        addresses.decompose(
+            payload.destination,
+            settings.publicAddress
+        ) ~= nil
 
-    local publicAddress =
-        string.lower(
-            tostring(
-                settings.publicAddress
-                or ""
-            )
-        )
-
-    if destination ~= publicAddress then
+    if not belongsToGateway then
         return false,
             "WRONG_DESTINATION",
             "The response was addressed "
@@ -492,8 +471,27 @@ local function handleProtocolMessage(
         local destinationPort =
             payload.destinationPort
 
+        local subdomain =
+            addresses.decompose(
+                payload.destination,
+                settings.publicAddress
+            )
+
+        if not subdomain then
+            rejectPacket(
+                settings,
+                message,
+                "WRONG_DESTINATION",
+                "The packet was addressed "
+                    .. "to another gateway."
+            )
+
+            return
+        end
+
         if not isPortOpen(
             settings,
+            subdomain,
             destinationPort
         ) then
             local reason =
@@ -503,7 +501,7 @@ local function handleProtocolMessage(
                 )
                 .. " is closed on "
                 .. tostring(
-                    settings.publicAddress
+                    payload.destination
                     or "this gateway"
                 )
                 .. "."
@@ -523,6 +521,7 @@ local function handleProtocolMessage(
             routeErrorMessage =
                 router.routeInbound(
                     settings,
+                    subdomain,
                     message
                 )
 
@@ -850,7 +849,8 @@ function relay.sendPacket(
     destination,
     destinationPort,
     data,
-    sourcePort
+    sourcePort,
+    source
 )
     if not activeSocket then
         return false, "Relay is not connected."
@@ -888,8 +888,8 @@ function relay.sendPacket(
         return false, "Packet data is required."
     end
 
-    local source =
-        settings.publicAddress
+    source = source
+        or settings.publicAddress
 
     if type(source) ~= "string"
         or source == ""

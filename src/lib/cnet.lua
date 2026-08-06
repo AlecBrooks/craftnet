@@ -1,5 +1,6 @@
 local validate = require("lib.validate")
 local ids = require("lib.ids")
+local addresses = require("lib.addresses")
 
 local cnet = {}
 
@@ -163,7 +164,7 @@ local function normalizeResponse(record)
     }
 end
 
-function cnet.connect(gatewayId)
+function cnet.connect(gatewayId, subdomain)
     gatewayId = tonumber(gatewayId)
 
     if not gatewayId
@@ -174,10 +175,23 @@ function cnet.connect(gatewayId)
             "Gateway ID must be a non-negative integer."
     end
 
+    subdomain =
+        addresses.normalizeSubdomain(
+            subdomain
+        )
+
+    if not subdomain then
+        return false,
+            "A subdomain is required (1 to 32 "
+            .. "lowercase letters, digits, or "
+            .. "hyphens)."
+    end
+
     return callDaemon(
         "connect",
         {
             gatewayId = gatewayId,
+            subdomain = subdomain,
         },
         8
     )

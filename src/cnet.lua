@@ -177,6 +177,14 @@ local function printStatus(status)
     )
 
     print(
+        "Subdomain: "
+        .. tostring(
+            status.subdomain
+            or "Not configured"
+        )
+    )
+
+    print(
         "Connection: "
         .. (
             status.connected
@@ -260,7 +268,7 @@ end
 
 local function showHelp()
     print("CraftNet host commands:")
-    print("  cnet connect <gateway ID>")
+    print("  cnet connect <gateway ID> <subdomain>")
     print("  cnet disconnect")
     print("  cnet status")
     print("  cnet ping")
@@ -287,7 +295,10 @@ if command == "" or command == "help" then
 
 elseif command == "connect" then
     local success, result =
-        cnet.connect(arguments[1])
+        cnet.connect(
+            arguments[1],
+            arguments[2]
+        )
 
     printColored(
         result,

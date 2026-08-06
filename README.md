@@ -2,7 +2,7 @@
 
 CraftNet is a low-level networking layer for **CC:Tweaked** computers: gateways, virtual ports, addresses, and request/response protocols that other programs can build internet-like applications on top of. It is not itself a browser or a set of apps — it is the plumbing.
 
-A **Gateway** computer bridges Minecraft's in-world Rednet network to an external relay over a persistent WebSocket connection. That relay is meant to let gateways on different Minecraft servers exchange packets, register human-readable addresses, and expose virtual ports to each other. A **Host** computer reaches that same network indirectly, through a Gateway, over Rednet.
+A **Gateway** computer bridges Minecraft's in-world Rednet network to an external relay over a persistent WebSocket connection. That relay is meant to let gateways on different Minecraft servers exchange packets, register human-readable addresses, and expose virtual ports to each other. A **Host** computer reaches that same network indirectly, through a Gateway, over Rednet — and is identified there by a **subdomain**, a stable per-host identity a bit like a hostname, that lets many Hosts behind one Gateway each run their own services on the same port number without colliding.
 
 CraftNet is in active development. The Gateway and Host client software is functional end-to-end. A private test relay exists and is used for real development testing, but it isn't part of this repository; the public WebSocket echo server referenced below remains the out-of-the-box default for anyone testing the client protocol on its own, without access to that relay.
 
@@ -109,18 +109,26 @@ If a key isn't given on the command line, CraftNet prompts for it without echoin
 
 CraftNet ports are virtual application ports carried inside the CraftNet protocol — not Minecraft server ports, router ports, or physical TCP ports. A single WebSocket connection can carry traffic for many CraftNet ports at once, so nothing needs to be forwarded at the router level.
 
+Every route belongs to a subdomain — the bare gateway address (`craftnet.craft`) is just the "root" entry in that same table, not a separate mechanism. See [Subdomains](#subdomains) below for how routes in different subdomains never conflict, even on the same port number.
+
 ```text
-ports open <port>                        Open a port, routed to this gateway
-ports route <ext> to <int> <computerId>  Open a port, routed to a specific local
-                                          host's internal port over Rednet
-ports close <port|all>                   Close one port, or every open port
-ports list                               List the routing table as text
-ports table                              Show the routing table in the dashboard
+ports open <port>                                    Open a port at the root address,
+                                                      routed to this gateway
+ports route <ext|@> to <int> <computerId> [subdomain] Route a port (or "@" for any port
+                                                       not otherwise claimed) to a specific
+                                                       host's internal port. Omit the
+                                                       subdomain to route the root address.
+ports close <port|@|all> [subdomain]                 Close one route, or every route for
+                                                       a subdomain, or (bare "all") every
+                                                       route on the whole gateway
+ports list [subdomain]                               List routes as text, optionally
+                                                       filtered to one subdomain
+ports table                                          Show the routing table in the dashboard
 ```
 
 `port`/`port open ...` also works as a singular alias for `ports`/`ports open ...`. Valid port numbers are `1`–`65535`.
 
-Opening a port with just `ports open <port>` routes inbound traffic on that port to the gateway itself (no local service currently binds gateway-hosted ports — that path is reserved for future use). `ports route <external> to <internal> <computerId>` is how a Gateway forwards a public port to a specific Host computer's internal port, translating the packet into a local Rednet delivery for that host.
+`ports open <port>` is a shorthand that always targets the root address and this gateway itself (no local service currently binds gateway-hosted ports — that path is reserved for future use). `ports route` is the general mechanism: it can target the root address (by omitting `[subdomain]`) or any specific Host subdomain, and it accepts `@` in place of a port number to mean "any port not otherwise explicitly routed within this same subdomain."
 
 ### System commands
 
@@ -153,12 +161,13 @@ Expected state after `relay connect`: `Gateway status: STARTING`, `Relay status:
 
 A Host computer has no direct internet access and reaches CraftNet only through a Gateway over Rednet. Installing the Host role runs a small always-on network manager (`cnetd`) in the background alongside a completely normal CraftOS shell — the daemon and the shell run concurrently, and CraftNet adds itself to the shell's program path so the `cnet` command works from any prompt.
 
-The daemon handles reconnecting to its configured gateway automatically and sends a periodic heartbeat ping; nothing needs to be kept running manually.
+The daemon handles reconnecting to its configured gateway automatically and sends a periodic heartbeat ping; nothing needs to be kept running manually. A connected Host's subdomain is saved locally too, so it's resent automatically on every reconnect.
 
 ### `cnet` command reference
 
 ```text
-cnet connect <gateway ID>                        Connect to a gateway over Rednet
+cnet connect <gateway ID> <subdomain>            Connect to a gateway over Rednet,
+                                                  claiming a subdomain identity
 cnet disconnect                                    Forget the configured gateway
 cnet status                                        Show this host's CraftNet status
 cnet ping                                          Ping the configured gateway
@@ -188,12 +197,29 @@ The API and the CLI both talk to the same `cnetd` daemon, so `cnet listen`/`cnet
 ### Host quick test
 
 ```text
-cnet connect <gateway computer ID>
+cnet connect <gateway computer ID> mythra
 cnet status
 cnet ping
 ```
 
-Expected result after `cnet connect`: `Connected to gateway ID <id> as <public address>.` `cnet status` then reports `Connection: ONLINE` and the assigned public address; `cnet ping` reports the gateway's round-trip time in milliseconds.
+Expected result after `cnet connect`: `Connected to gateway ID <id> as mythra.<gateway's address>.` `cnet status` then reports `Connection: ONLINE`, the `Subdomain` you chose, and the composed public address; `cnet ping` reports the gateway's round-trip time in milliseconds.
+
+## Subdomains
+
+A Host's subdomain is its identity on a Gateway — closer to a hostname than to a routing detail. It's chosen once at `cnet connect`, is required (there's no "default"/anonymous Host identity), and is saved by the Gateway keyed to the Host's computer ID, so reconnecting after a reboot or a modem drop reclaims the same name automatically rather than racing another Host for it.
+
+A Host's full external address is `<subdomain>.<gateway's address>` — e.g. a Host connecting as `mythra` to a gateway that's registered `craftnet.craft` is reachable at `mythra.craftnet.craft`. If the gateway hasn't registered a domain yet, the Host is just reachable as `mythra` directly; once a domain is registered later, new connections pick up the full address automatically (existing sessions need to reconnect to get the update).
+
+**Routing is fully independent per subdomain.** The routing table is really keyed by `(subdomain, port)`, not by port alone — the root address (`craftnet.craft`, no subdomain) is simply the entry where subdomain is empty, not a separate mechanism. This is what lets many Hosts each run a service on the same port number, the way many real machines can each listen on their own port 80:
+
+```text
+ports route 80 to 80 5              (routes root:80 to computer 5)
+ports route @ to 80 7 mythra        (routes mythra:* to computer 7's internal 80)
+```
+
+With those two rules: a packet sent to `craftnet.craft:80` goes to computer 5. A packet sent to `mythra.craftnet.craft:80` goes to computer 7 — computer 5's claim on port 80 has no effect on `mythra`'s table at all, because they're different subdomains. `mythra.craftnet.craft` on *any* other port also reaches computer 7, via the `@` wildcard, since nothing more specific is routed for `mythra`. An explicit port rule for a given subdomain always takes priority over that same subdomain's own `@` rule; it has no effect on any other subdomain's rules.
+
+Addressing works without any change to the public relay protocol: `destination` fields already carry a full free-form address string today, so `mythra.craftnet.craft` travels exactly like `craftnet.craft` always has. The receiving Gateway decomposes it locally by stripping its own registered domain as a suffix (`lib/addresses.lua`) to recover the subdomain, then does the composite `(subdomain, port)` lookup — the relay only needs to keep routing by domain ownership to the right Gateway connection, same as it already does for a bare domain.
 
 ## CraftNet Protocol
 
@@ -244,7 +270,7 @@ error
 ping / pong
 ```
 
-This is the protocol Hosts and Gateways speak to each other over Rednet — it never leaves the local Minecraft network. A Host says `hello` to register with a Gateway; the Gateway answers `welcome`. `outbound` is a Host asking its Gateway to relay a packet outward; `deliver` is the Gateway handing an inbound public `packet`/`request` to the right Host. `request`/`response` mirror the public protocol's return-token exchange for two-way local traffic, and `return_delivery` is how a Gateway hands a Host its response once the return trip completes. Message shapes for `request`, `response`, and `deliver` embed a full public-protocol message inside their payload and validate it against the public protocol's own rules.
+This is the protocol Hosts and Gateways speak to each other over Rednet — it never leaves the local Minecraft network. A Host says `hello` (carrying its required subdomain) to register with a Gateway; the Gateway answers `welcome` with the Host's full composed external address. `outbound` is a Host asking its Gateway to relay a packet outward; `deliver` is the Gateway handing an inbound public `packet`/`request` to the right Host. `request`/`response` mirror the public protocol's return-token exchange for two-way local traffic, and `return_delivery` is how a Gateway hands a Host its response once the return trip completes. Message shapes for `request`, `response`, and `deliver` embed a full public-protocol message inside their payload and validate it against the public protocol's own rules.
 
 ### Error codes
 
@@ -256,8 +282,10 @@ GATEWAY_DISABLED        RELAY_OFFLINE             RELAY_SEND_FAILED
 SERVICE_UNAVAILABLE     MODEM_MISSING             HOST_UNAVAILABLE
 INVALID_PUBLIC_REQUEST  RETURN_SESSION_REJECTED   WRONG_DESTINATION
 UNKNOWN_RETURN_TOKEN    RETURN_SOURCE_MISMATCH    RETURN_PORT_MISMATCH
-ROUTING_FAILED          UNSUPPORTED_LOCAL_MESSAGE
+ROUTING_FAILED          UNSUPPORTED_LOCAL_MESSAGE SUBDOMAIN_TAKEN
 ```
+
+`SUBDOMAIN_TAKEN` is returned to a Host's `hello` when the subdomain it asked for already belongs to a different computer ID. `WRONG_DESTINATION` covers both an inbound packet/request addressed to a domain this gateway doesn't own, and a return response addressed somewhere that doesn't decompose to one of this gateway's own addresses.
 
 ## Virtual Ports Versus Internet Ports
 
@@ -286,17 +314,20 @@ No router port forwarding is required, because the gateway always initiates the 
 Gateway settings live at `/craftnet-data/settings.lua`:
 
 ```text
-Gateway enabled state       Relay URL              Open ports (routing table)
-Gateway status               Relay status            Registered domain
-Public address                Domain management keys   Gateway authentication key
+Gateway enabled state       Relay URL              Open ports (routing table,
+Gateway status               Relay status            keyed by subdomain and port)
+Public address                Domain management keys  Registered domain
+Gateway authentication key    Host subdomain claims (keyed by computer ID)
 ```
 
 Host settings live separately at `/craftnet-data/host.lua`:
 
 ```text
-Configured gateway ID     Auto-connect preference
+Configured gateway ID     Claimed subdomain      Auto-connect preference
 Request/heartbeat timing   Listening ports
 ```
+
+The `openPorts` format changed to accommodate subdomains (nested by subdomain, then by port, instead of a flat port-keyed table) — this is a breaking change to the settings file shape, not just an addition. There's no migration step; on a test/lab gateway, existing routes just need to be re-added with `ports route`.
 
 Live connection and relay/modem health statuses are always recomputed at startup — a stale saved value must never cause the interface to claim a disconnected gateway is still online.
 
@@ -305,7 +336,6 @@ Live connection and relay/modem health statuses are always recomputed at startup
 ```text
 craftnet/
 ├── bootstrap.lua
-├── dev-startup.lua            (gitignored, local dev only)
 └── src/
     ├── main.lua                Gateway entry point
     ├── host.lua                 Host entry point (daemon + shell)
@@ -328,18 +358,21 @@ craftnet/
     │   ├── relay.lua             WebSocket relay connection and routing
     │   ├── return_sessions.lua   In-flight request/response tracking
     │   ├── router.lua            Inbound packet routing to local hosts
-    │   ├── routes.lua            Port routing table
+    │   ├── routes.lua            Port routing table (keyed by subdomain and port)
     │   ├── settings.lua          Gateway persistent settings
     │   ├── ui.lua                Gateway dashboard
     │   ├── message_protocol.lua  Shared JSON envelope used by both protocols
     │   ├── validate.lua          Shared field validators (ports, IDs, addresses)
     │   ├── tokens.lua            Return-token generation and validation
-    │   └── ids.lua               Shared message/request ID generator
+    │   ├── ids.lua               Shared message/request ID generator
+    │   └── addresses.lua         Subdomain validation and address compose/decompose
     └── assets/
         └── logo.nfp
 ```
 
-`lib/message_protocol.lua`, `lib/validate.lua`, `lib/tokens.lua`, and `lib/ids.lua` are the shared low-level pieces both protocols and both roles are built from — the intended reuse surface for anything else layered on top of CraftNet later.
+`lib/message_protocol.lua`, `lib/validate.lua`, `lib/tokens.lua`, `lib/ids.lua`, and `lib/addresses.lua` are the shared low-level pieces both protocols and both roles are built from — the intended reuse surface for anything else layered on top of CraftNet later.
+
+`sync-local.sh` (gitignored, personal local-dev tooling) still exists on disk but is no longer part of the normal workflow — testing happens by installing through `bootstrap.lua` from GitHub instead.
 
 ## Roadmap
 
@@ -381,6 +414,8 @@ craftnet/
 - [x] Track connected hosts
 - [x] Route a public port to a specific host's internal port
 - [x] Host-side daemon, shell integration, and developer API (`cnet`)
+- [x] Required per-host subdomain identity, persisted across reconnects
+- [x] Per-subdomain independent routing table with `@` wildcard fallback
 - [ ] Allow a service running on the gateway itself to bind a CraftNet port
 
 ## Version

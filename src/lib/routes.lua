@@ -1,4 +1,5 @@
 local validate = require("lib.validate")
+local addresses = require("lib.addresses")
 
 local routes = {}
 
@@ -16,72 +17,87 @@ function routes.parseComputerId(value)
 end
 
 
+function routes.parseSubdomain(value)
+    if value == addresses.ROOT_SUBDOMAIN then
+        return addresses.ROOT_SUBDOMAIN
+    end
+
+    return addresses.normalizeSubdomain(value)
+end
+
+
+-- Parses a routing table's "port" column: either a literal
+-- external port number, or the wildcard "@" that catches any
+-- port not otherwise explicitly routed for the same subdomain.
+function routes.parsePortKey(value)
+    if value == addresses.WILDCARD_PORT then
+        return addresses.WILDCARD_PORT
+    end
+
+    local port = parsePort(value)
+
+    if not port then
+        return nil
+    end
+
+    return tostring(port)
+end
+
+
+-- Normalizes a raw openPorts table into:
+--
+-- {
+--     [subdomain] = {
+--         [portKey] = { internalPort = N, computerId = ID },
+--         ...
+--     },
+--     ...
+-- }
+--
+-- subdomain is "" for the gateway's own root/bare address.
+-- portKey is either a stringified port number or "@". Entries
+-- that don't parse cleanly are dropped rather than erroring,
+-- since this runs on every settings load.
 function routes.normalize(openPorts)
     local normalized = {}
-    local localComputerId =
-        os.getComputerID()
+    local localComputerId = os.getComputerID()
 
     if type(openPorts) ~= "table" then
         return normalized
     end
 
-    for key, value in pairs(openPorts) do
-        local externalPort = nil
+    for subdomainKey, subdomainPorts in pairs(openPorts) do
+        local subdomain =
+            routes.parseSubdomain(subdomainKey)
 
-        -- Old array format:
-        --
-        -- { 12, 80, 443 }
-        if type(key) == "number"
-            and type(value) == "number"
-        then
-            externalPort =
-                parsePort(value)
+        if subdomain and type(subdomainPorts) == "table" then
+            for portKeyRaw, value in pairs(subdomainPorts) do
+                local portKey =
+                    routes.parsePortKey(portKeyRaw)
 
-        -- Map and route formats:
-        --
-        -- ["12"] = true
-        --
-        -- ["12"] = {
-        --     internalPort = 1,
-        --     computerId = 3,
-        -- }
-        elseif value ~= nil
-            and value ~= false
-        then
-            externalPort =
-                parsePort(key)
-        end
+                if portKey and type(value) == "table" then
+                    local internalPort =
+                        parsePort(value.internalPort)
+                        or (
+                            portKey ~= addresses.WILDCARD_PORT
+                            and tonumber(portKey)
+                        )
 
-        if externalPort then
-            local internalPort =
-                externalPort
+                    local computerId =
+                        parseComputerId(value.computerId)
+                        or localComputerId
 
-            local computerId =
-                localComputerId
+                    if internalPort then
+                        normalized[subdomain] =
+                            normalized[subdomain] or {}
 
-            if type(value) == "table" then
-                internalPort =
-                    parsePort(
-                        value.internalPort
-                    )
-                    or externalPort
-
-                computerId =
-                    parseComputerId(
-                        value.computerId
-                    )
-                    or localComputerId
+                        normalized[subdomain][portKey] = {
+                            internalPort = internalPort,
+                            computerId = computerId,
+                        }
+                    end
+                end
             end
-
-            normalized[
-                tostring(externalPort)
-            ] = {
-                internalPort =
-                    internalPort,
-
-                computerId =
-                    computerId,
-            }
         end
     end
 
@@ -89,65 +105,120 @@ function routes.normalize(openPorts)
 end
 
 
-function routes.get(
-    openPorts,
-    externalPort
-)
-    externalPort =
-        parsePort(externalPort)
+-- Looks up the route for (subdomain, externalPort), falling
+-- back to that subdomain's own "@" wildcard route if no exact
+-- port match exists. Different subdomains never share routes,
+-- even for the same port number.
+function routes.get(openPorts, subdomain, externalPort)
+    subdomain = routes.parseSubdomain(subdomain)
 
-    if not externalPort then
+    local portKey = routes.parsePortKey(externalPort)
+
+    if not subdomain
+        or not portKey
+        or portKey == addresses.WILDCARD_PORT
+    then
         return nil
     end
 
-    local normalized =
-        routes.normalize(openPorts)
+    local subdomainRoutes =
+        routes.normalize(openPorts)[subdomain]
 
-    return normalized[
-        tostring(externalPort)
-    ]
-end
-
-
-function routes.isOpen(
-    openPorts,
-    externalPort
-)
-    return routes.get(
-        openPorts,
-        externalPort
-    ) ~= nil
-end
-
-
-function routes.list(openPorts)
-    local normalized =
-        routes.normalize(openPorts)
-
-    local routeList = {}
-
-    for externalPort, route
-        in pairs(normalized)
-    do
-        routeList[#routeList + 1] = {
-            externalPort =
-                tonumber(externalPort),
-
-            internalPort =
-                route.internalPort,
-
-            computerId =
-                route.computerId,
-        }
+    if not subdomainRoutes then
+        return nil
     end
 
-    table.sort(
-        routeList,
-        function(left, right)
-            return left.externalPort
-                < right.externalPort
+    return subdomainRoutes[portKey]
+        or subdomainRoutes[addresses.WILDCARD_PORT]
+end
+
+
+function routes.isOpen(openPorts, subdomain, externalPort)
+    return routes.get(openPorts, subdomain, externalPort) ~= nil
+end
+
+
+function routes.setRoute(
+    openPorts,
+    subdomain,
+    portKey,
+    internalPort,
+    computerId
+)
+    openPorts[subdomain] =
+        openPorts[subdomain] or {}
+
+    openPorts[subdomain][portKey] = {
+        internalPort = internalPort,
+        computerId = computerId,
+    }
+end
+
+
+function routes.removeRoute(openPorts, subdomain, portKey)
+    if type(openPorts[subdomain]) ~= "table"
+        or openPorts[subdomain][portKey] == nil
+    then
+        return false
+    end
+
+    openPorts[subdomain][portKey] = nil
+
+    if next(openPorts[subdomain]) == nil then
+        openPorts[subdomain] = nil
+    end
+
+    return true
+end
+
+
+function routes.removeAllForSubdomain(openPorts, subdomain)
+    local existed = openPorts[subdomain] ~= nil
+    openPorts[subdomain] = nil
+    return existed
+end
+
+
+-- Flat, sorted list for display: grouped by subdomain, then
+-- by port ascending, with each subdomain's "@" wildcard (if
+-- any) sorted last within that group.
+function routes.list(openPorts)
+    local normalized = routes.normalize(openPorts)
+    local routeList = {}
+
+    for subdomain, subdomainRoutes in pairs(normalized) do
+        for portKey, route in pairs(subdomainRoutes) do
+            routeList[#routeList + 1] = {
+                subdomain = subdomain,
+                externalPort = portKey,
+                internalPort = route.internalPort,
+                computerId = route.computerId,
+            }
         end
-    )
+    end
+
+    table.sort(routeList, function(left, right)
+        if left.subdomain ~= right.subdomain then
+            return left.subdomain < right.subdomain
+        end
+
+        local leftIsWildcard =
+            left.externalPort == addresses.WILDCARD_PORT
+
+        local rightIsWildcard =
+            right.externalPort == addresses.WILDCARD_PORT
+
+        if leftIsWildcard ~= rightIsWildcard then
+            return rightIsWildcard
+        end
+
+        if leftIsWildcard then
+            return false
+        end
+
+        return tonumber(left.externalPort)
+            < tonumber(right.externalPort)
+    end)
 
     return routeList
 end

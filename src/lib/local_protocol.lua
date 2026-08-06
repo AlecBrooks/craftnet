@@ -1,6 +1,7 @@
 local publicProtocol = require("lib.protocol")
 local validate = require("lib.validate")
 local tokens = require("lib.tokens")
+local addresses = require("lib.addresses")
 local messageProtocol = require("lib.message_protocol")
 
 
@@ -17,6 +18,14 @@ local function validateHello(payload)
     ) then
         return false,
             "hello.clientVersion must be a string."
+    end
+
+    if not addresses.isValidSubdomain(
+        payload.subdomain
+    ) then
+        return false,
+            "hello.subdomain must be 1 to 32 lowercase "
+            .. "letters, digits, or hyphens."
     end
 
     return true
@@ -300,7 +309,8 @@ localProtocol.REDNET_PROTOCOL =
 
 
 function localProtocol.newHello(
-    clientVersion
+    clientVersion,
+    subdomain
 )
     return localProtocol.createMessage(
         "hello",
@@ -310,6 +320,9 @@ function localProtocol.newHello(
 
             clientVersion =
                 clientVersion,
+
+            subdomain =
+                subdomain,
         }
     )
 end

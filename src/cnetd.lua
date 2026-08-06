@@ -6,6 +6,7 @@ local localProtocol =
 local config = require("config")
 local validate = require("lib.validate")
 local tokens = require("lib.tokens")
+local addresses = require("lib.addresses")
 
 
 local DATA_DIRECTORY = "/craftnet-data"
@@ -220,6 +221,7 @@ local isValidPort = validate.isValidPort
 local function getDefaults()
     return {
         gatewayId = nil,
+        subdomain = nil,
         autoConnect = true,
         requestTimeout = 5,
         heartbeatInterval = 10,
@@ -284,6 +286,11 @@ local function loadSettings()
     ) then
         result.gatewayId = nil
     end
+
+    result.subdomain =
+        addresses.normalizeSubdomain(
+            loaded.subdomain
+        )
 
     result.autoConnect =
         loaded.autoConnect ~= false
@@ -454,7 +461,8 @@ local function attemptConnect(
 
     local hello =
         localProtocol.newHello(
-            config.version
+            config.version,
+            settings.subdomain
         )
 
     runtime.connecting = true
@@ -953,6 +961,7 @@ local function getStatus()
         computerId = os.getComputerID(),
         modemStatus = modem.getStatus(),
         gatewayId = settings.gatewayId,
+        subdomain = settings.subdomain,
         autoConnect = settings.autoConnect,
         connected = runtime.connected,
         publicAddress = runtime.publicAddress,
@@ -981,7 +990,20 @@ local function handleRequest(
                 "A valid gateway ID is required."
         end
 
+        local subdomain =
+            addresses.normalizeSubdomain(
+                payload.subdomain
+            )
+
+        if not subdomain then
+            return false,
+                "A valid subdomain is required "
+                .. "(1 to 32 lowercase letters, "
+                .. "digits, or hyphens)."
+        end
+
         settings.gatewayId = gatewayId
+        settings.subdomain = subdomain
         settings.autoConnect = true
 
         runtime.connecting = false
@@ -1003,6 +1025,7 @@ local function handleRequest(
 
     elseif action == "disconnect" then
         settings.gatewayId = nil
+        settings.subdomain = nil
         settings.autoConnect = false
         setDisconnected(
             "Disconnected by user."

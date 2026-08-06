@@ -72,6 +72,12 @@ local function getDefaults()
 
         openPorts = {},
 
+        -- Persisted subdomain claims, keyed by computer ID
+        -- (as a string), so a reconnecting host automatically
+        -- gets its own name back rather than racing another
+        -- computer for it.
+        hostSubdomains = {},
+
         connectedHosts = 0,
     }
 end

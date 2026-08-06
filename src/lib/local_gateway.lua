@@ -15,6 +15,12 @@ local publicProtocol =
 local returnSessions =
     require("lib.return_sessions")
 
+local addresses =
+    require("lib.addresses")
+
+local settingsManager =
+    require("lib.settings")
+
 local hosts = {}
 
 
@@ -59,6 +65,62 @@ local function sendError(
 end
 
 
+-- A host's subdomain is a stable identity tied to its
+-- computer ID, not just a routing convenience -- it persists
+-- across reconnects/reboots so a name can't be taken by a
+-- different computer while its owner is briefly offline.
+local function claimSubdomain(
+    settings,
+    computerId,
+    subdomain
+)
+    settings.hostSubdomains =
+        settings.hostSubdomains or {}
+
+    local computerKey =
+        tostring(computerId)
+
+    for ownerKey, ownedSubdomain
+        in pairs(settings.hostSubdomains)
+    do
+        if ownedSubdomain == subdomain
+            and ownerKey ~= computerKey
+        then
+            return false,
+                "Subdomain '"
+                .. subdomain
+                .. "' is already in use by "
+                .. "computer ID "
+                .. ownerKey
+                .. "."
+        end
+    end
+
+    if settings.hostSubdomains[computerKey]
+        == subdomain
+    then
+        return true
+    end
+
+    settings.hostSubdomains[computerKey] =
+        subdomain
+
+    local saved, saveError =
+        settingsManager.save(settings)
+
+    if not saved then
+        return false,
+            "Could not save subdomain "
+            .. "assignment: "
+            .. tostring(
+                saveError or "Unknown error"
+            )
+    end
+
+    return true
+end
+
+
 local function registerHost(
     settings,
     senderId,
@@ -79,11 +141,34 @@ local function registerHost(
         return
     end
 
+    local claimed, claimError =
+        claimSubdomain(
+            settings,
+            senderId,
+            payload.subdomain
+        )
+
+    if not claimed then
+        sendError(
+            senderId,
+            message.id,
+            "SUBDOMAIN_TAKEN",
+            tostring(claimError)
+        )
+
+        return
+    end
+
+    local hostAddress =
+        addresses.compose(
+            payload.subdomain,
+            settings.publicAddress
+        )
+
     local welcome =
         localProtocol.newWelcome(
             message.id,
-            settings.publicAddress
-                or "Unassigned"
+            hostAddress
         )
 
     local sent, sendErrorMessage =
@@ -106,6 +191,9 @@ local function registerHost(
 
     hosts[senderId] = {
         computerId = senderId,
+
+        subdomain =
+            payload.subdomain,
 
         clientVersion =
             payload.clientVersion
@@ -206,7 +294,12 @@ local function handleOutbound(
             payload.destination,
             payload.destinationPort,
             payload.data,
-            payload.sourcePort
+            payload.sourcePort,
+
+            addresses.compose(
+                host.subdomain,
+                settings.publicAddress
+            )
         )
 
     if not sent then
@@ -274,7 +367,10 @@ local function handleRequest(
 
     local publicRequest =
         publicProtocol.newRequest(
-            settings.publicAddress,
+            addresses.compose(
+                host.subdomain,
+                settings.publicAddress
+            ),
             payload.destination,
             payload.destinationPort,
             payload.returnToken,
@@ -403,7 +499,10 @@ local function handleResponse(
 
     local publicResponse =
         publicProtocol.newResponse(
-            settings.publicAddress,
+            addresses.compose(
+                host.subdomain,
+                settings.publicAddress
+            ),
             payload.sourcePort,
             payload.destination,
             payload.returnToken,
