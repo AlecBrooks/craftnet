@@ -1,37 +1,39 @@
-# CraftNet Gateway
+# CraftNet
 
-CraftNet is an experimental internet-style network for **CC:Tweaked** computers.
+CraftNet is a low-level networking layer for **CC:Tweaked** computers: gateways, virtual ports, addresses, and request/response protocols that other programs can build internet-like applications on top of. It is not itself a browser or a set of apps — it is the plumbing.
 
-The CraftNet Gateway connects a ComputerCraft system to an external relay through a persistent WebSocket connection. That relay will eventually allow gateways on completely different Minecraft servers to exchange packets, expose services, and communicate through virtual CraftNet addresses and ports.
+A **Gateway** computer bridges Minecraft's in-world Rednet network to an external relay over a persistent WebSocket connection. That relay is meant to let gateways on different Minecraft servers exchange packets, register human-readable addresses, and expose virtual ports to each other. A **Host** computer reaches that same network indirectly, through a Gateway, over Rednet.
 
-CraftNet is currently in early development. The gateway client foundation is functional, but the real CraftNet relay server has not yet been built.
+CraftNet is in active development. The Gateway and Host client software is functional end-to-end against a public WebSocket echo server used for protocol testing. The real CraftNet relay server — the backend the echo server currently stands in for — has not yet been built.
 
-## Current Status
+## Installing
 
-The gateway currently supports:
+Place `bootstrap.lua` on a fresh CC:Tweaked computer as `/bootstrap.lua` and run it. It will:
 
-- Persistent local configuration
-- Gateway enable and disable controls
-- A local traffic kill switch
-- Configurable WebSocket relay addresses
-- One-shot WebSocket connectivity testing
-- Persistent WebSocket connections
-- Simultaneous command-console and relay loops
-- JSON protocol encoding and decoding
-- Protocol message validation
-- Unique message IDs
-- CraftNet protocol ping and pong messages
-- Automatic responses to incoming pings
-- Virtual port configuration
-- Honest runtime status reporting
+1. Ask whether the computer is a **Gateway** or a **Host** (or accept `bootstrap gateway` / `bootstrap host` as an argument), and remember the choice in `/craftnet-data/install-role.lua`.
+2. Install `/startup.lua` so CraftNet starts automatically on every boot.
+3. Pull the current `src/` tree for that role straight from GitHub and install it to `/craftnet`, replacing the previous install atomically (with rollback if the download or install fails).
+4. Launch the role's program — `main.lua` for a Gateway, `host.lua` for a Host.
 
-The current public WebSocket echo server is used only for development testing. It confirms that the gateway can connect, send data, receive data, decode CraftNet messages, and respond correctly.
+Because it re-syncs from GitHub on every boot, a CraftNet computer always runs the latest code without any manual file copying.
 
-It is not a real CraftNet relay.
+## Requirements
 
-## Status Screen
+- Minecraft with CC:Tweaked
+- HTTP and WebSocket access enabled for CC:Tweaked (Gateway role)
+- Access to a compatible WebSocket relay
+- A wireless or wired modem, for:
+  - Every Host computer (its only path to a Gateway)
+  - Any Gateway that needs to serve local Hosts
 
-The gateway dashboard currently displays:
+An advanced computer is recommended for the Gateway's color dashboard.
+
+## Gateway
+
+The Gateway is the computer with real internet access. It owns the relay connection, the port routing table, domain registration, and the registry of local Hosts connected to it over Rednet.
+
+### Dashboard
+
 ![alt text](pics/image.png)
 ```text
 Gateway status
@@ -42,379 +44,99 @@ Open ports
 Connected hosts
 ```
 
-### Gateway Status
+The top status bar also shows live relay reachability (`RELAY:`) and modem state (`MODEM:`), independent of whether a persistent connection is currently open.
+
+#### Gateway status
 
 | Status | Meaning |
 |---|---|
-| `OFFLINE` | The gateway is disabled and must refuse CraftNet traffic. |
-| `STARTING` | The gateway is enabled but has not completed a real CraftNet relay handshake. |
-| `ONLINE` | Reserved for a gateway that has successfully completed the CraftNet handshake. |
+| `OFFLINE` | The gateway is disabled and refuses CraftNet traffic. |
+| `STARTING` | The gateway is enabled but has not completed the relay handshake. |
+| `ONLINE` | The relay has accepted the gateway's `hello` and answered with a `welcome`. |
 
-The gateway does not currently display `ONLINE`, because the real relay server and handshake have not yet been implemented.
-
-### Relay Status
+#### Relay status
 
 | Status | Meaning |
 |---|---|
 | `DISCONNECTED` | No WebSocket connection exists. |
 | `CONNECTING` | The gateway is attempting to open a WebSocket connection. |
-| `CONNECTED` | A real WebSocket connection is currently open. |
+| `CONNECTED` | A WebSocket connection is open and has completed the handshake. |
 
-A connected WebSocket does not automatically mean the full CraftNet gateway is online.
+A connected WebSocket does not, on its own, mean the gateway is fully online — see the status table above.
 
-## Commands
-
-### Gateway Commands
-
-#### Enable the gateway
+### Gateway commands
 
 ```text
-gateway enable
+gateway enable            Enable the gateway (status becomes STARTING)
+gateway disable            Local kill switch: disables the gateway,
+                            closes the relay connection, refuses new traffic
+gateway status              Show the current gateway status
 ```
 
-Enables the CraftNet gateway and changes its status to:
+### Relay commands
+
+The relay URL lives in persistent settings, not in source, so it can be changed without editing CraftNet's code.
 
 ```text
-STARTING
+relay show                                 Show the configured relay URL
+relay set <ws://... | wss://...>            Change it (relay must be disconnected first)
+relay test                                  One-shot echo test: connect, send a
+                                             unique string, confirm it comes back, close
+relay connect                               Open the persistent connection and perform
+                                             the CraftNet handshake (gateway must be enabled)
+relay disconnect                            Close the persistent connection
+relay status                                Report whether a persistent connection is open
+relay ping                                  Send a CraftNet protocol ping over the
+                                             persistent connection
+relay last [rejected]                       Show the last valid message received, or the
+                                             last packet the gateway itself rejected
+relay send <address> <port> <message>       Send a raw packet through the relay
 ```
 
-The gateway remains in `STARTING` until a real CraftNet relay sends a valid `welcome` message.
+The current development default relay is `wss://example.tweaked.cc/echo` — a public echo server used to validate the protocol, not a real CraftNet relay.
 
-#### Disable the gateway
+### Domain commands
+
+A domain is a human-readable CraftNet address (always ending in `.craft`) that a relay can bind to a gateway's connection, replacing an opaque assigned address.
 
 ```text
-gateway disable
+domains register <domain> [registration-key]   Register a domain with the relay
+domains clear <domain> [management-key]        Release a domain
 ```
 
-Acts as the local CraftNet kill switch.
+If a key isn't given on the command line, CraftNet prompts for it without echoing input. A successful registration's management key is saved locally (`/craftnet-data/settings.lua`) so future `domains clear` calls don't require re-entering it.
 
-It:
+### Port commands
 
-- Sets the gateway status to `OFFLINE`
-- Closes the active relay WebSocket
-- Sets the relay status to `DISCONNECTED`
-- Prevents new CraftNet traffic from being processed
-
-The local management console remains available so the gateway can be enabled again.
-
-#### Show the gateway status
+CraftNet ports are virtual application ports carried inside the CraftNet protocol — not Minecraft server ports, router ports, or physical TCP ports. A single WebSocket connection can carry traffic for many CraftNet ports at once, so nothing needs to be forwarded at the router level.
 
 ```text
-gateway status
+ports open <port>                        Open a port, routed to this gateway
+ports route <ext> to <int> <computerId>  Open a port, routed to a specific local
+                                          host's internal port over Rednet
+ports close <port|all>                   Close one port, or every open port
+ports list                               List the routing table as text
+ports table                              Show the routing table in the dashboard
 ```
 
-Displays the current gateway status without changing anything.
+`port`/`port open ...` also works as a singular alias for `ports`/`ports open ...`. Valid port numbers are `1`–`65535`.
 
----
+Opening a port with just `ports open <port>` routes inbound traffic on that port to the gateway itself (no local service currently binds gateway-hosted ports — that path is reserved for future use). `ports route <external> to <internal> <computerId>` is how a Gateway forwards a public port to a specific Host computer's internal port, translating the packet into a local Rednet delivery for that host.
 
-### Port Commands
-
-CraftNet ports are virtual application ports carried inside the CraftNet protocol.
-
-They are not Minecraft server ports, router ports, or physical TCP ports.
-
-A single WebSocket connection can eventually carry traffic for many CraftNet ports:
+### System commands
 
 ```text
-CraftNet port 12
-CraftNet port 21
-CraftNet port 80
-CraftNet port 443
+system clear      Clear the current notice and redraw the dashboard
+system term        Drop into a normal CraftOS shell inside CraftNet
+system reboot       Reboot the computer
+system shutdown     Shut down the computer
 ```
 
-#### Open a virtual port
+Typing `exit` at any time closes the relay connection and leaves CraftNet back to the CraftOS shell.
 
-```text
-ports open <port>
-```
+### Gateway quick test
 
-Example:
-
-```text
-ports open 80
-```
-
-Marks CraftNet port `80` as open and saves the change to persistent settings.
-
-![alt text](pics/image-1.png)
-
-Valid port numbers are:
-
-```text
-1-65535
-```
-
-The singular command alias also works:
-
-```text
-port open 80
-```
-
-#### Close a virtual port
-
-```text
-ports close <port>
-```
-
-Example:
-
-```text
-ports close 80
-```
-
-Removes the port from the gateway’s open-port configuration.
-
-#### Close every virtual port
-
-```text
-ports close all
-```
-
-Closes all configured CraftNet ports.
-
-#### List open ports
-
-```text
-ports list
-```
-
-Displays the currently configured open ports.
-
-When no ports are open, the dashboard displays:
-
-```text
-None
-```
-
----
-
-### Relay Commands
-
-The relay URL is stored in the gateway’s persistent settings. It is not hardcoded into the relay networking code.
-
-This allows the gateway to change relays without editing CraftNet’s source files.
-
-#### Show the configured relay
-
-```text
-relay show
-```
-
-Displays the currently configured WebSocket URL.
-
-The current development default is:
-
-```text
-wss://example.tweaked.cc/echo
-```
-
-#### Change the configured relay
-
-```text
-relay set <websocket-url>
-```
-
-Example:
-
-```text
-relay set wss://relay.example.com/gateway
-```
-
-The URL must begin with either:
-
-```text
-ws://
-```
-
-or:
-
-```text
-wss://
-```
-
-The new URL is saved persistently.
-
-The relay must be disconnected before changing its URL.
-
-#### Test WebSocket connectivity
-
-```text
-relay test
-```
-
-Performs a temporary echo test:
-
-1. Opens a WebSocket connection
-2. Sends a unique test string
-3. Waits for the same string to be returned
-4. Confirms the response matches
-5. Closes the connection
-
-This is similar to a network connectivity sanity check. It proves that CC:Tweaked can:
-
-- Resolve and reach the server
-- Establish a secure WebSocket connection
-- Send data
-- Receive data
-
-It does not test the real CraftNet routing system.
-
-The persistent relay must be disconnected before running the echo test.
-
-#### Connect to the relay
-
-```text
-relay connect
-```
-![alt text](pics/image-2.png)
-
-Opens a persistent WebSocket connection to the configured relay.
-
-The gateway must be enabled first:
-
-```text
-gateway enable
-relay connect
-```
-
-After connecting, the relay status becomes:
-
-```text
-CONNECTED
-```
-
-When using the public echo server, the gateway remains:
-
-```text
-STARTING
-```
-
-because the echo server cannot perform a CraftNet handshake.
-
-#### Disconnect from the relay
-
-```text
-relay disconnect
-```
-
-Closes the active WebSocket connection and changes the relay status to:
-
-```text
-DISCONNECTED
-```
-
-#### Show the relay connection status
-
-```text
-relay status
-```
-
-Reports whether a persistent relay connection is currently active.
-
-#### Send a CraftNet protocol ping
-
-```text
-relay ping
-```
-![alt text](pics/image-3.png)
-
-Creates a valid CraftNet `ping` message, encodes it as JSON, and sends it through the persistent WebSocket.
-
-With the current echo server, the message flow is:
-
-```text
-Gateway creates ping
-        ↓
-Gateway sends ping JSON
-        ↓
-Echo server returns ping JSON
-        ↓
-Gateway validates and decodes ping
-        ↓
-Gateway automatically creates pong
-        ↓
-Gateway sends pong JSON
-        ↓
-Echo server returns pong JSON
-```
-
-A successful command displays the unique ping message ID.
-
-Example:
-
-```text
-Protocol ping sent: 0-1784566449002-1
-```
-
-#### Show the last valid CraftNet message
-
-```text
-relay last
-```
-![alt text](pics/image-4.png)
-Displays the type and ID of the most recently received valid CraftNet protocol message.
-
-Example:
-
-```text
-Last message: pong [0-1784566449035-2]
-```
-
-When testing against the echo server, this confirms the complete protocol round trip:
-
-```text
-Create message
-→ validate
-→ encode JSON
-→ send
-→ receive
-→ decode JSON
-→ validate
-→ dispatch
-→ automatically respond
-```
-
----
-
-### System Commands
-
-#### Clear the current notice
-
-```text
-system clear
-```
-
-Clears the current command-result message and redraws the gateway dashboard.
-
-#### Reboot the ComputerCraft computer
-
-```text
-system reboot
-```
-
-Immediately reboots the ComputerCraft computer.
-
-#### Shut down the ComputerCraft computer
-
-```text
-system shutdown
-```
-
-Immediately powers off the ComputerCraft computer.
-
----
-
-### Exit CraftNet
-
-```text
-exit
-```
-
-Closes the active relay connection and exits the CraftNet interface back to the CraftOS shell.
-
-## Quick Test
-
-The following sequence demonstrates the currently implemented gateway and protocol features:
+A minimal sequence to confirm the client-side protocol path end-to-end against the public echo server:
 
 ```text
 gateway enable
@@ -426,31 +148,59 @@ relay last
 gateway disable
 ```
 
-Expected state after connecting:
+Expected state after `relay connect`: `Gateway status: STARTING`, `Relay status: CONNECTED` (the echo server can't complete a real handshake, so the gateway never reaches `ONLINE`). Expected result after `relay last`: `Last message: pong [message-id]`. After `gateway disable`: both statuses back to `OFFLINE`/`DISCONNECTED`.
+
+## Host
+
+A Host computer has no direct internet access and reaches CraftNet only through a Gateway over Rednet. Installing the Host role runs a small always-on network manager (`cnetd`) in the background alongside a completely normal CraftOS shell — the daemon and the shell run concurrently, and CraftNet adds itself to the shell's program path so the `cnet` command works from any prompt.
+
+The daemon handles reconnecting to its configured gateway automatically and sends a periodic heartbeat ping; nothing needs to be kept running manually.
+
+### `cnet` command reference
 
 ```text
-Gateway status: STARTING
-Relay status:   CONNECTED
+cnet connect <gateway ID>                        Connect to a gateway over Rednet
+cnet disconnect                                    Forget the configured gateway
+cnet status                                        Show this host's CraftNet status
+cnet ping                                          Ping the configured gateway
+cnet send <address> <port> <message>               Send a one-way packet
+cnet request <address> <port> <message>            Send a packet and wait for a response
+cnet reply <message>                               Answer the last received packet or request
+cnet listen <port>                                 Start accepting packets on an internal port
+cnet unlisten <port>                                Stop listening on an internal port
+cnet listeners                                     List the ports currently being listened on
+cnet receive <port> [timeout]                       Wait for and return the next packet on a port
+cnet last                                          Show the last accepted packet
+cnet last rejected                                 Show the last packet the daemon rejected, and why
 ```
 
-Expected result after `relay last`:
+### `cnet` developer API
+
+Other CC:Tweaked programs on the same computer can skip the CLI entirely and call the same functionality directly:
+
+```lua
+local cnet = require("lib.cnet")
+
+local response, requestError = cnet.request("alice.craft", 80, "hello")
+```
+
+The API and the CLI both talk to the same `cnetd` daemon, so `cnet listen`/`cnet receive` from the shell and `cnet.listen`/`cnet.receive` from a program can interoperate on the same host.
+
+### Host quick test
 
 ```text
-Last message: pong [message-id]
+cnet connect <gateway computer ID>
+cnet status
+cnet ping
 ```
 
-Expected state after disabling the gateway:
-
-```text
-Gateway status: OFFLINE
-Relay status:   DISCONNECTED
-```
+Expected result after `cnet connect`: `Connected to gateway ID <id> as <public address>.` `cnet status` then reports `Connection: ONLINE` and the assigned public address; `cnet ping` reports the gateway's round-trip time in milliseconds.
 
 ## CraftNet Protocol
 
-CraftNet messages are encoded as JSON and sent through the WebSocket connection.
+CraftNet actually defines two related JSON protocols, sharing one envelope shape.
 
-Every message uses a common envelope:
+### Message envelope
 
 ```json
 {
@@ -464,121 +214,55 @@ Every message uses a common envelope:
 }
 ```
 
-The protocol currently defines six message types:
+`id` is always `computerId-epochMillis-counter`, guaranteeing uniqueness even for multiple messages created in the same millisecond on the same computer.
+
+### Public protocol (`craftnet`, Gateway ↔ relay, over WebSocket)
 
 ```text
-hello
-welcome
-packet
+hello               welcome
+packet              request / response
+domain_register     domain_registered
+domain_clear        domain_cleared
 error
-ping
-pong
+ping / pong
 ```
 
-### `hello`
+- **`hello`** — sent when opening the relay connection. Carries the gateway's computer ID, client version, and a per-install `gatewayKey` (a 32–128 character secret generated once at first run and stored in `/craftnet-data/settings.lua`) that authenticates the gateway to the relay.
+- **`welcome`** — the relay's acceptance of a `hello`, carrying a session ID and the gateway's assigned public address. Only a valid `welcome` should move a gateway from `STARTING` to `ONLINE`.
+- **`packet`** — one-way routed traffic between two CraftNet addresses and ports.
+- **`request`** / **`response`** — a two-way exchange correlated by a `returnToken` (an 8–64 character opaque string) rather than by the transport connection itself, so a response can be routed back to the correct Host even though it arrives asynchronously.
+- **`domain_register`** / **`domain_registered`**, **`domain_clear`** / **`domain_cleared`** — binding and releasing a `.craft` address, gated by registration/management keys.
+- **`error`** — reports a protocol or delivery failure (see error codes below).
+- **`ping`** / **`pong`** — liveness check; a gateway automatically answers valid incoming pings.
 
-Sent from a gateway to a real CraftNet relay when beginning the handshake.
-
-Planned information includes:
-
-```json
-{
-  "gatewayId": 0,
-  "clientVersion": "0.1"
-}
-```
-
-### `welcome`
-
-Sent by the relay after accepting a gateway.
-
-Planned information includes:
-
-```json
-{
-  "sessionId": "relay-session-id",
-  "publicAddress": "assigned-address"
-}
-```
-
-Only a valid `welcome` message should allow the gateway to change from:
+### Local protocol (`craftnet-local`, Gateway ↔ Host, over Rednet)
 
 ```text
-STARTING
+hello / welcome
+outbound / deliver
+request / response / return_delivery
+error
+ping / pong
 ```
 
-to:
+This is the protocol Hosts and Gateways speak to each other over Rednet — it never leaves the local Minecraft network. A Host says `hello` to register with a Gateway; the Gateway answers `welcome`. `outbound` is a Host asking its Gateway to relay a packet outward; `deliver` is the Gateway handing an inbound public `packet`/`request` to the right Host. `request`/`response` mirror the public protocol's return-token exchange for two-way local traffic, and `return_delivery` is how a Gateway hands a Host its response once the return trip completes. Message shapes for `request`, `response`, and `deliver` embed a full public-protocol message inside their payload and validate it against the public protocol's own rules.
+
+### Error codes
+
+Errors seen in practice today include:
 
 ```text
-ONLINE
+PORT_CLOSED             ID_MISMATCH               NOT_REGISTERED
+GATEWAY_DISABLED        RELAY_OFFLINE             RELAY_SEND_FAILED
+SERVICE_UNAVAILABLE     MODEM_MISSING             HOST_UNAVAILABLE
+INVALID_PUBLIC_REQUEST  RETURN_SESSION_REJECTED   WRONG_DESTINATION
+UNKNOWN_RETURN_TOKEN    RETURN_SOURCE_MISMATCH    RETURN_PORT_MISMATCH
+ROUTING_FAILED          UNSUPPORTED_LOCAL_MESSAGE
 ```
-
-### `packet`
-
-Carries routed CraftNet traffic.
-
-A packet contains fields such as:
-
-```json
-{
-  "source": "alice",
-  "sourcePort": 49152,
-  "destination": "bob",
-  "destinationPort": 80,
-  "data": "hello"
-}
-```
-
-Packet routing has not yet been implemented.
-
-### `error`
-
-Reports a protocol or delivery failure.
-
-Planned error codes include conditions such as:
-
-```text
-PORT_CLOSED
-ADDRESS_NOT_FOUND
-INVALID_PACKET
-UNAUTHORIZED
-```
-
-### `ping`
-
-Checks whether another CraftNet component is responsive.
-
-The gateway automatically answers valid incoming pings.
-
-### `pong`
-
-Sent in response to a `ping`.
-
-It contains the original ping message ID so the sender can match the response to the request.
-
-## Message IDs
-
-CraftNet message IDs currently contain:
-
-```text
-computer ID
-timestamp
-local message counter
-```
-
-Example:
-
-```text
-0-1784566449002-1
-```
-
-This prevents multiple messages created during the same millisecond from receiving the same ID.
 
 ## Virtual Ports Versus Internet Ports
 
-CraftNet virtual ports are not physical internet ports.
-
-The gateway connects outward to one WebSocket relay:
+CraftNet virtual ports are not physical internet ports. The gateway makes exactly one outbound WebSocket connection:
 
 ```text
 Gateway
@@ -588,7 +272,7 @@ Gateway
 Relay server on TCP 443
 ```
 
-Many virtual CraftNet services can eventually share that same connection:
+Many virtual CraftNet services can eventually share that one connection:
 
 ```text
 CraftNet port 12 → mail service
@@ -596,68 +280,68 @@ CraftNet port 21 → file service
 CraftNet port 80 → web service
 ```
 
-Users should not need to configure router port forwarding because the gateway initiates the outbound WebSocket connection.
+No router port forwarding is required, because the gateway always initiates the connection outward.
 
 ## Persistent Settings
 
-Runtime settings are stored outside the CraftNet source directory:
+Gateway settings live at `/craftnet-data/settings.lua`:
 
 ```text
-/craftnet-data/settings.lua
+Gateway enabled state       Relay URL              Open ports (routing table)
+Gateway status               Relay status            Account state
+Public address                Registered domain       Domain management keys
+Gateway authentication key
 ```
 
-Current persistent settings include:
+Host settings live separately at `/craftnet-data/host.lua`:
 
 ```text
-Gateway enabled state
-Gateway status
-Relay URL
-Relay status
-Open ports
-Account state
-Public address
-Connected-host count
+Configured gateway ID     Auto-connect preference
+Request/heartbeat timing   Listening ports
 ```
 
-Live connection statuses are corrected when CraftNet starts.
-
-A stale saved value must never cause the interface to claim that a disconnected gateway is still online.
+Live connection and relay/modem health statuses are always recomputed at startup — a stale saved value must never cause the interface to claim a disconnected gateway is still online.
 
 ## Project Structure
 
 ```text
 craftnet/
 ├── bootstrap.lua
-├── dev-startup.lua
+├── dev-startup.lua            (gitignored, local dev only)
 └── src/
-    ├── main.lua
+    ├── main.lua                Gateway entry point
+    ├── host.lua                 Host entry point (daemon + shell)
+    ├── cnetd.lua                 Host network-manager daemon
+    ├── cnet.lua                   Host `cnet` shell command
     ├── config.lua
     ├── commands/
+    │   ├── domains.lua
     │   ├── gateway.lua
     │   ├── port.lua
     │   ├── relay.lua
     │   └── system.lua
-    └── lib/
-        ├── command.lua
-        ├── protocol.lua
-        ├── relay.lua
-        ├── settings.lua
-        └── ui.lua
+    ├── lib/
+    │   ├── cnet.lua              Host developer API (used by cnet.lua and other programs)
+    │   ├── command.lua           Gateway command dispatcher
+    │   ├── local_gateway.lua     Gateway-side handling of local Host traffic
+    │   ├── local_protocol.lua    Local (Rednet) protocol
+    │   ├── modem.lua             Rednet/modem lifecycle
+    │   ├── protocol.lua          Public (relay) protocol
+    │   ├── relay.lua             WebSocket relay connection and routing
+    │   ├── return_sessions.lua   In-flight request/response tracking
+    │   ├── router.lua            Inbound packet routing to local hosts
+    │   ├── routes.lua            Port routing table
+    │   ├── settings.lua          Gateway persistent settings
+    │   ├── ui.lua                Gateway dashboard
+    │   ├── message_protocol.lua  Shared JSON envelope used by both protocols
+    │   ├── validate.lua          Shared field validators (ports, IDs, addresses)
+    │   ├── tokens.lua            Return-token generation and validation
+    │   └── ids.lua               Shared message/request ID generator
+    └── assets/
+        └── logo.nfp
 ```
 
-## Requirements
-
-- Minecraft
-- CC:Tweaked
-- A ComputerCraft computer
-- HTTP and WebSocket access enabled for CC:Tweaked
-- Access to a compatible WebSocket server
-
-An advanced computer is recommended for the color dashboard.
-
-A modem is not required for the gateway’s external WebSocket connection.
-
-A modem will eventually be needed when separate ComputerCraft machines inside the Minecraft world need to communicate with the gateway.
+`lib/message_protocol.lua`, `lib/validate.lua`, `lib/tokens.lua`, and `lib/ids.lua` are the shared low-level pieces both protocols and both roles are built from — the intended reuse surface for anything else layered on top of CraftNet later.
 
 ## Roadmap
 
@@ -680,29 +364,29 @@ A modem will eventually be needed when separate ComputerCraft machines inside th
 ### Relay and routing
 
 - [ ] Build the CraftNet relay server
-- [ ] Send `hello` after connecting
-- [ ] Receive and validate `welcome`
-- [ ] Assign gateway sessions
-- [ ] Assign public CraftNet addresses
-- [ ] Promote authenticated gateways to `ONLINE`
-- [ ] Route packets between gateways
-- [ ] Enforce destination ports
-- [ ] Return protocol errors
-- [ ] Handle reconnects and timeouts
+- [x] Send `hello` after connecting, authenticated with a gateway key
+- [x] Receive and validate `welcome`
+- [x] Promote authenticated gateways to `ONLINE`
+- [x] Register and release human-readable domains
+- [x] Two-way `request`/`response` traffic with return-token routing
+- [x] Enforce destination ports against the routing table
+- [x] Return protocol errors for rejected traffic
+- [x] Automatic reconnect and heartbeat for Host ↔ Gateway (Rednet)
+- [ ] Automatic reconnect for Gateway ↔ relay (WebSocket) — currently manual via `relay connect`
+- [ ] Route packets between two separate gateways through a real relay server
 
 ### Local networking
 
-- [ ] Detect an attached modem
-- [ ] Accept connections from local ComputerCraft hosts
-- [ ] Route relay packets to local hosts
-- [ ] Track connected hosts
-- [ ] Allow local services to bind CraftNet ports
+- [x] Detect an attached modem
+- [x] Accept connections from local ComputerCraft hosts
+- [x] Route relay packets to local hosts
+- [x] Track connected hosts
+- [x] Route a public port to a specific host's internal port
+- [x] Host-side daemon, shell integration, and developer API (`cnet`)
+- [ ] Allow a service running on the gateway itself to bind a CraftNet port
 
 ## Version
 
-Current development version:
-CraftNet Gateway v0.1
-```
+Current development version: CraftNet v0.1
 
 CraftNet is experimental software and is not yet ready for production use.
-````
